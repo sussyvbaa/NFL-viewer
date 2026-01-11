@@ -24,11 +24,6 @@ const resolveApiBaseUrl = () => {
     } catch (error) {
         // Ignore storage access errors.
     }
-    const host = window.location.hostname;
-    const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
-    if (!isLocal) {
-        return 'https://nfl-viewer-api.onrender.com/api';
-    }
     return fallback;
 };
 
