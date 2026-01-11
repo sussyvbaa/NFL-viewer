@@ -33,19 +33,77 @@ const App = {
     init() {
         console.log('Sports Viewer initializing...');
 
-        // Initialize modules
+        this.detectPlatform();
         UI.init();
-
-        // Set up routes
         this.setupRoutes();
-
-        // Set up global event listeners
         this.setupEventListeners();
-
-        // Initialize router (triggers initial route)
+        this.setupShareButton();
         Router.init();
 
         console.log('Sports Viewer ready.');
+    },
+    
+    detectPlatform() {
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        const isStandalone = window.navigator.standalone === true || 
+                            window.matchMedia('(display-mode: standalone)').matches;
+        
+        if (isIOS) {
+            document.body.classList.add('is-ios');
+        }
+        if (isStandalone) {
+            document.body.classList.add('standalone-ios');
+        }
+        if ('ontouchstart' in window) {
+            document.body.classList.add('touch-device');
+        }
+    },
+    
+    setupShareButton() {
+        const shareBtn = document.getElementById('share-btn');
+        if (!shareBtn) return;
+        
+        if (!navigator.share && !navigator.clipboard) {
+            shareBtn.style.display = 'none';
+            return;
+        }
+        
+        shareBtn.addEventListener('click', async () => {
+            const shareData = {
+                title: 'Sports Viewer',
+                text: 'Watch live sports streams - NFL, NBA, MLB, NHL',
+                url: window.location.href
+            };
+            
+            try {
+                if (navigator.share) {
+                    await navigator.share(shareData);
+                } else if (navigator.clipboard) {
+                    await navigator.clipboard.writeText(window.location.href);
+                    this.showToast('Link copied to clipboard');
+                }
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    console.error('Share failed:', err);
+                }
+            }
+        });
+    },
+    
+    showToast(message) {
+        const existing = document.querySelector('.toast');
+        if (existing) existing.remove();
+        
+        const toast = document.createElement('div');
+        toast.className = 'toast';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+        
+        requestAnimationFrame(() => toast.classList.add('is-visible'));
+        setTimeout(() => {
+            toast.classList.remove('is-visible');
+            setTimeout(() => toast.remove(), 300);
+        }, 2500);
     },
 
     /**
@@ -260,7 +318,14 @@ const App = {
     }
 };
 
-// Initialize app when DOM is ready
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+            .then((reg) => console.log('SW registered:', reg.scope))
+            .catch((err) => console.log('SW registration failed:', err));
+    });
+}
+
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => App.init());
 } else {

@@ -52,6 +52,7 @@
     box-sizing: border-box;
     margin: 0;
     padding: 0;
+    -webkit-tap-highlight-color: transparent;
 }
 
 html {
@@ -59,6 +60,7 @@ html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -67,7 +69,19 @@ body {
     color: var(--text-primary);
     line-height: 1.6;
     min-height: 100vh;
+    min-height: 100dvh;
     overflow-x: hidden;
+    padding-top: env(safe-area-inset-top);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+}
+
+body.standalone-ios {
+    padding-top: env(safe-area-inset-top);
+}
+
+body.standalone-ios .header {
+    padding-top: calc(1rem + env(safe-area-inset-top));
 }
 
 @keyframes fadeIn {
@@ -832,6 +846,51 @@ body.shortcuts-open {
     min-width: 22px;
     height: 20px;
     font-size: 0.65rem;
+}
+
+.share-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem;
+}
+
+.share-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
+.toast {
+    position: fixed;
+    bottom: 2rem;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: rgba(255,255,255,0.95);
+    color: #0a0a0a;
+    padding: 0.75rem 1.5rem;
+    border-radius: var(--radius-lg);
+    font-size: 0.85rem;
+    font-weight: 500;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    z-index: 1000;
+    opacity: 0;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    pointer-events: none;
+}
+
+.toast.is-visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+@media (max-width: 768px) {
+    .shortcuts-hint {
+        display: none;
+    }
+}
+
+.touch-device .shortcuts-hint {
+    display: none;
 }
 
 body.is-ios .video-wrapper {
@@ -3733,58 +3792,195 @@ body.is-mobile .delete-btn {
 }
 
 /* ============================================
+   iOS / Touch Device Optimizations
+   ============================================ */
+.touch-device .btn,
+.touch-device .nav-link,
+.touch-device .filter-btn,
+.touch-device .league-btn {
+    min-height: 44px;
+}
+
+.touch-device .game-card {
+    -webkit-touch-callout: none;
+}
+
+.touch-device .game-card:active {
+    transform: scale(0.98);
+    transition: transform 0.1s ease;
+}
+
+body.standalone-ios {
+    padding-bottom: env(safe-area-inset-bottom);
+}
+
+body.standalone-ios .footer {
+    padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
+}
+
+body.standalone-ios .toast {
+    bottom: calc(2rem + env(safe-area-inset-bottom));
+}
+
+body.standalone-ios .shortcuts-overlay__content,
+body.standalone-ios .settings-modal__content {
+    max-height: calc(85vh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+}
+
+/* ============================================
    Responsive Design
    ============================================ */
 @media (max-width: 768px) {
     .header {
         padding: 0.75rem 1rem;
+        padding-top: max(0.75rem, env(safe-area-inset-top));
     }
 
     .header-content {
-        flex-direction: column;
-        gap: 0.75rem;
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        justify-content: space-between;
+    }
+    
+    .logo {
+        font-size: 1rem;
+        order: 1;
     }
 
     .nav {
+        order: 3;
         width: 100%;
         justify-content: center;
-        flex-wrap: wrap;
+        margin-top: 0.25rem;
+    }
+    
+    .nav-link {
+        padding: 0.5rem 0.75rem;
+        font-size: 0.7rem;
+    }
+    
+    .header-actions {
+        order: 2;
+        gap: 0.25rem;
+    }
+    
+    .settings-btn {
+        padding: 0.4rem 0.6rem;
+        font-size: 0.65rem;
+    }
+    
+    .add-game-btn {
+        padding: 0.4rem 0.6rem;
     }
 
     .main-content {
         padding: 1rem;
+        padding-bottom: calc(1rem + env(safe-area-inset-bottom));
     }
 
     .page-title {
-        font-size: 1.5rem;
+        font-size: 1.25rem;
+    }
+    
+    .page-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.75rem;
+    }
+    
+    .page-actions {
+        width: 100%;
+        display: flex;
+        gap: 0.5rem;
+    }
+    
+    .page-actions .btn {
+        flex: 1;
+        justify-content: center;
+    }
+    
+    .games-filter,
+    .league-filter {
+        width: 100%;
+        margin-left: 0;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+    
+    .games-filter::-webkit-scrollbar,
+    .league-filter::-webkit-scrollbar {
+        display: none;
+    }
+    
+    .filter-btn,
+    .league-btn {
+        flex-shrink: 0;
+        padding: 0.6rem 1rem;
     }
 
     .games-grid {
         grid-template-columns: 1fr;
+        gap: 0.75rem;
+    }
+    
+    .game-card {
+        padding: 1rem;
+    }
+    
+    .game-status {
+        font-size: 0.55rem;
+        padding: 0.2rem 0.4rem;
     }
 
     .watch-header {
         flex-direction: column;
         align-items: flex-start;
+        gap: 0.75rem;
     }
 
     .watch-title {
         order: -1;
         width: 100%;
+        font-size: 1rem;
+    }
+    
+    .back-link {
+        font-size: 0.7rem;
     }
 
     .stream-controls {
         width: 100%;
         flex-wrap: wrap;
+        gap: 0.5rem;
     }
 
     .stream-select {
         flex: 1;
+        min-height: 44px;
+    }
+    
+    .stream-controls .btn {
+        flex: 1;
+        min-height: 44px;
     }
 
+    .watch-matchup {
+        gap: 0.75rem;
+    }
+    
     .watch-matchup .team-logo {
-        width: 44px;
-        height: 44px;
+        width: 36px;
+        height: 36px;
+    }
+    
+    .watch-matchup .team {
+        font-size: 0.9rem;
+    }
+    
+    .video-wrapper {
+        border-radius: var(--radius-md);
     }
 
     .multi-picker-controls {
@@ -3794,9 +3990,25 @@ body.is-mobile .delete-btn {
     .multi-picker-controls input[type="search"] {
         flex: 1 1 100%;
         min-width: 0;
+        min-height: 44px;
     }
 
     .multi-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .settings-modal__content {
+        width: 95%;
+        max-height: 90vh;
+        border-radius: var(--radius-lg);
+    }
+    
+    .shortcuts-overlay__content {
+        width: 95%;
+        padding: 1.5rem;
+    }
+    
+    .shortcuts-grid {
         grid-template-columns: 1fr;
     }
 
