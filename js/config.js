@@ -11,6 +11,27 @@
  * 4. The rest of the application will work automatically
  */
 
+const resolveApiBaseUrl = () => {
+    const fallback = '/api';
+    if (typeof window === 'undefined') {
+        return fallback;
+    }
+    try {
+        const stored = window.localStorage.getItem('nfl_viewer_api_base');
+        if (stored) {
+            return stored;
+        }
+    } catch (error) {
+        // Ignore storage access errors.
+    }
+    const host = window.location.hostname;
+    const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
+    if (!isLocal) {
+        return 'https://nfl-viewer-api.onrender.com/api';
+    }
+    return fallback;
+};
+
 const Config = {
     // Default league for manual actions
     DEFAULT_LEAGUE: 'nfl',
@@ -22,7 +43,7 @@ const Config = {
     AMERICAN_LEAGUES: ['nfl', 'nba', 'mlb', 'nhl'],
 
     // Backend API base URL
-    API_BASE_URL: '/api',
+    API_BASE_URL: resolveApiBaseUrl(),
 
     // Hours after kickoff to treat a game as ended when no live signal exists
     GAME_END_GRACE_HOURS: 6,
