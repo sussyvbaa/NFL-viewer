@@ -5,6 +5,137 @@
  * The backend handles retries, caching, and stream health checks.
  */
 
+const ESPN_SCOREBOARD_ENDPOINTS = {
+    nfl: 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard',
+    nba: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard',
+    mlb: 'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard',
+    nhl: 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard'
+};
+
+const selectEspnLogo = team => {
+    if (!team) return null;
+    if (team.logo) return team.logo;
+    const logos = Array.isArray(team.logos) ? team.logos : [];
+    return logos[0]?.href || null;
+};
+
+const normalizePlayoffTeam = competitor => {
+    if (!competitor) return null;
+    const team = competitor.team || {};
+    return {
+        id: team.id || null,
+        name: team.displayName || team.shortDisplayName || team.name || null,
+        abbreviation: team.abbreviation || null,
+        logo: selectEspnLogo(team),
+        score: competitor.score ?? competitor?.score?.value ?? competitor?.score?.displayValue ?? null,
+        winner: Boolean(competitor.winner)
+    };
+};
+
+const buildPlayoffRoundLabels = data => {
+    const labels = new Map();
+    const calendar = data?.leagues?.[0]?.calendar || [];
+    const postseason = calendar.find(entry => entry.label === 'Postseason');
+    (postseason?.entries || []).forEach(entry => {
+        const value = parseInt(entry.value, 10);
+        if (!Number.isNaN(value)) {
+            labels.set(value, entry.label || entry.alternateLabel || `Round ${value}`);
+        }
+    });
+    return labels;
+};
+
+const groupPlayoffEventsByRound = (events, labels) => {
+    const roundMap = new Map();
+    (events || []).forEach(event => {
+        const weekNumber = event?.week?.number ? parseInt(event.week.number, 10) : null;
+        const roundNumber = Number.isNaN(weekNumber) ? null : weekNumber;
+        const roundKey = roundNumber ?? 0;
+        if (!roundMap.has(roundKey)) {
+            roundMap.set(roundKey, {
+                number: roundNumber,
+                label: roundNumber ? labels.get(roundNumber) || `Round ${roundNumber}` : 'Postseason',
+                matchups: []
+            });
+        }
+
+        const competition = event?.competitions?.[0] || {};
+        const competitors = competition?.competitors || [];
+        const home = competitors.find(team => team.homeAway === 'home');
+        const away = competitors.find(team => team.homeAway === 'away');
+        const status = competition?.status?.type || event?.status?.type || {};
+        roundMap.get(roundKey).matchups.push({
+            id: event.id,
+            name: event.name || event.shortName,
+            shortName: event.shortName || event.name,
+            startDate: competition.startDate || event.date || null,
+            status: {
+                state: status.state || null,
+                completed: Boolean(status.completed),
+                detail: status.shortDetail || status.detail || status.description || ''
+            },
+            home: normalizePlayoffTeam(home),
+            away: normalizePlayoffTeam(away)
+        });
+    });
+
+    return Array.from(roundMap.values()).sort((a, b) => {
+        const aNumber = a.number ?? 0;
+        const bNumber = b.number ?? 0;
+        return aNumber - bNumber;
+    });
+};
+
+const fetchPlayoffsFromEspn = async (league) => {
+    const baseUrl = ESPN_SCOREBOARD_ENDPOINTS[league];
+    if (!baseUrl) {
+        return null;
+    }
+
+    const fetchScoreboard = async url => {
+        const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        if (!response.ok) {
+            throw new Error(`ESPN scoreboard responded with ${response.status}`);
+        }
+        return response.json();
+    };
+
+    const currentScoreboard = await fetchScoreboard(baseUrl);
+    const seasonType = currentScoreboard?.leagues?.[0]?.season?.type?.type || currentScoreboard?.season?.type;
+    const isPlayoffs = Number(seasonType) === 3;
+    if (!isPlayoffs) {
+        return {
+            isPlayoffs: false,
+            rounds: [],
+            meta: {
+                league,
+                seasonType: seasonType ?? null,
+                cacheAgeSec: 0,
+                stale: false,
+                fromCache: false
+            }
+        };
+    }
+
+    const postseasonData = currentScoreboard?.events?.length
+        ? currentScoreboard
+        : await fetchScoreboard(`${baseUrl}?seasontype=3`);
+    const labels = buildPlayoffRoundLabels(postseasonData);
+    const rounds = groupPlayoffEventsByRound(postseasonData?.events || [], labels);
+    return {
+        isPlayoffs: true,
+        season: postseasonData?.season || null,
+        rounds,
+        meta: {
+            league,
+            seasonType: seasonType ?? 3,
+            cacheAgeSec: 0,
+            stale: false,
+            fromCache: false
+        }
+    };
+};
+
 const API = {
     // API base URL
     BASE_URL: Config.API_BASE_URL,
@@ -18,6 +149,11 @@ const API = {
     standingsCache: {
         byLeague: {},
         ttl: 300000,
+        forceNext: false
+    },
+    playoffsCache: {
+        byLeague: {},
+        ttl: 60000,
         forceNext: false
     },
 
@@ -246,11 +382,82 @@ const API = {
     },
 
     /**
+     * Fetch playoff brackets
+     * @param {string} league - League key
+     * @returns {Promise<Object|null>} Playoffs payload
+     */
+    async fetchPlayoffs(league, options = {}) {
+        const now = Date.now();
+        const key = league || Config.DEFAULT_LEAGUE;
+        const entry = this.playoffsCache.byLeague[key];
+        const force = Boolean(options.forceRefresh || this.playoffsCache.forceNext);
+
+        if (!force && entry && (now - entry.lastFetch) < this.playoffsCache.ttl) {
+            return entry.data || null;
+        }
+
+        try {
+            const url = new URL(`${this.BASE_URL}/playoffs`, window.location.origin);
+            url.searchParams.set('league', key);
+            if (force) {
+                url.searchParams.set('force', '1');
+            }
+
+            const response = await fetch(url.toString(), {
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`Playoffs API responded with ${response.status}`);
+            }
+
+            const contentType = response.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                throw new Error('Playoffs API returned non-JSON response');
+            }
+
+            const data = await response.json();
+            this.playoffsCache.byLeague[key] = {
+                data,
+                lastFetch: now
+            };
+            this.playoffsCache.forceNext = false;
+            return data;
+        } catch (error) {
+            console.warn('Playoffs API failed, falling back to ESPN:', error);
+            try {
+                const fallbackData = await fetchPlayoffsFromEspn(key);
+                if (fallbackData) {
+                    this.playoffsCache.byLeague[key] = {
+                        data: fallbackData,
+                        lastFetch: now
+                    };
+                    this.playoffsCache.forceNext = false;
+                    return fallbackData;
+                }
+            } catch (fallbackError) {
+                console.error('Failed to fetch playoffs from ESPN:', fallbackError);
+            }
+            return null;
+        }
+    },
+
+    /**
      * Clear standings cache
      */
     clearStandingsCache() {
         this.standingsCache.byLeague = {};
         this.standingsCache.forceNext = true;
+    },
+
+    /**
+     * Clear playoffs cache
+     */
+    clearPlayoffsCache() {
+        this.playoffsCache.byLeague = {};
+        this.playoffsCache.forceNext = true;
     },
 
     /**

@@ -1732,6 +1732,7 @@ const UI = {
         if (refreshBtn) {
             refreshBtn.addEventListener('click', () => {
                 API.clearStandingsCache();
+                API.clearPlayoffsCache();
                 this.loadStandings();
             });
         }
@@ -2033,6 +2034,8 @@ const UI = {
             statusEl.classList.toggle('stale', Boolean(meta.stale));
         }
 
+        await this.loadPlayoffs();
+
         const groups = this.buildStandingsGroups(standings, league, viewMode, sortMode);
 
         if (!standings || !Array.isArray(groups) || groups.length === 0) {
@@ -2117,6 +2120,278 @@ const UI = {
             section.appendChild(table);
             contentEl.appendChild(section);
         });
+    },
+
+    async loadPlayoffs() {
+        const league = this.currentStandingsLeague || Config.AMERICAN_LEAGUES[0];
+        const season = this.currentStandingsSeason || 'current';
+        const section = document.getElementById('playoffs-section');
+        const roundsEl = document.getElementById('playoffs-rounds');
+        const subtitleEl = document.getElementById('playoffs-subtitle');
+        const emptyEl = document.getElementById('playoffs-empty');
+
+        if (!section || !roundsEl) {
+            return;
+        }
+
+        section.classList.add('hidden');
+        emptyEl?.classList.add('hidden');
+        roundsEl.innerHTML = '';
+        if (subtitleEl) {
+            subtitleEl.textContent = '';
+        }
+
+        if (season !== 'current') {
+            return;
+        }
+
+        const data = await API.fetchPlayoffs(league);
+        if (!data || !data.isPlayoffs || !Array.isArray(data.rounds) || data.rounds.length === 0) {
+            emptyEl?.classList.remove('hidden');
+            return;
+        }
+
+        if (subtitleEl) {
+            subtitleEl.textContent = data.season?.year ? `Season ${data.season.year}` : '';
+        }
+
+        const resolveConference = team => {
+            if (!team) return null;
+            const resolved = TeamsUtil.resolveTeam({
+                name: team.name || team.displayName,
+                abbreviation: team.abbreviation
+            }, league);
+            return resolved?.conference || null;
+        };
+
+        const getMatchupConference = matchup => {
+            const homeConference = resolveConference(matchup.home);
+            const awayConference = resolveConference(matchup.away);
+            if (homeConference && homeConference === awayConference) {
+                return homeConference;
+            }
+            return homeConference || awayConference || null;
+        };
+
+        const buildMatchupCard = matchup => {
+            const card = document.createElement('article');
+            card.className = 'playoff-matchup';
+
+            if (matchup?.isPlaceholder) {
+                card.classList.add('is-placeholder');
+            }
+
+            const header = document.createElement('div');
+            header.className = 'playoff-matchup-header';
+            const status = document.createElement('span');
+            status.className = 'playoff-matchup-status';
+            status.textContent = matchup.status?.detail || 'Matchup';
+            header.appendChild(status);
+            card.appendChild(header);
+
+            const teams = document.createElement('div');
+            teams.className = 'playoff-matchup-teams';
+
+            const buildTeamRow = (team, isHome) => {
+                const row = document.createElement('div');
+                row.className = 'playoff-team';
+                if (team?.winner) {
+                    row.classList.add('is-winner');
+                }
+
+                const logo = document.createElement('img');
+                logo.className = 'playoff-team-logo hidden';
+                logo.loading = 'lazy';
+                this.setTeamLogo(logo, team, league);
+                if (!logo.classList.contains('hidden')) {
+                    row.appendChild(logo);
+                }
+
+                const name = document.createElement('span');
+                name.className = 'playoff-team-name';
+                name.textContent = team?.abbreviation || team?.name || 'TBD';
+                row.appendChild(name);
+
+                const score = document.createElement('span');
+                score.className = 'playoff-team-score';
+                if (matchup?.isPlaceholder) {
+                    score.textContent = '';
+                } else {
+                    score.textContent = team?.score ?? '—';
+                }
+                row.appendChild(score);
+
+                return row;
+            };
+
+            teams.appendChild(buildTeamRow(matchup.away, false));
+            teams.appendChild(buildTeamRow(matchup.home, true));
+            card.appendChild(teams);
+
+            return card;
+        };
+
+        const createPlaceholderMatchup = () => ({
+            isPlaceholder: true,
+            status: { detail: 'TBD' },
+            home: null,
+            away: null
+        });
+
+        const buildRoundColumn = (round, matchupsList, expectedCount = null) => {
+            const column = document.createElement('div');
+            column.className = 'playoff-round';
+
+            const title = document.createElement('h3');
+            title.className = 'playoff-round-title';
+            title.textContent = round.label || `Round ${round.number || ''}`.trim();
+            column.appendChild(title);
+
+            const matchups = document.createElement('div');
+            matchups.className = 'playoff-matchups';
+
+            const filteredMatchups = matchupsList || [];
+            const totalCount = expectedCount !== null ? Math.max(expectedCount, filteredMatchups.length) : filteredMatchups.length;
+
+            for (let index = 0; index < totalCount; index += 1) {
+                const matchup = filteredMatchups[index] || createPlaceholderMatchup();
+                matchups.appendChild(buildMatchupCard(matchup));
+            }
+
+            if (!totalCount) {
+                return null;
+            }
+
+            column.appendChild(matchups);
+            return column;
+        };
+
+        const bracket = document.createElement('div');
+        bracket.className = 'playoffs-bracket';
+
+        if (league === 'nfl') {
+            const roundsByNumber = new Map();
+            data.rounds.forEach(round => {
+                if (round.number !== null && round.number !== undefined) {
+                    roundsByNumber.set(round.number, round);
+                }
+            });
+
+            const roundLabelFallbacks = {
+                1: 'Wild Card',
+                2: 'Divisional',
+                3: 'Conference',
+                5: 'Super Bowl'
+            };
+
+            const ensureRound = (roundNumber) => {
+                const existing = roundsByNumber.get(roundNumber);
+                if (existing) {
+                    return existing;
+                }
+                return {
+                    number: roundNumber,
+                    label: roundLabelFallbacks[roundNumber] || `Round ${roundNumber}`,
+                    matchups: []
+                };
+            };
+
+            const expectedMatchups = {
+                1: 3,
+                2: 2,
+                3: 1,
+                5: 1
+            };
+
+            const splitByConference = (roundMatchups = []) => {
+                const afc = [];
+                const nfc = [];
+                const unknown = [];
+
+                roundMatchups.forEach(matchup => {
+                    const conference = getMatchupConference(matchup);
+                    if (conference === 'AFC') {
+                        afc.push(matchup);
+                    } else if (conference === 'NFC') {
+                        nfc.push(matchup);
+                    } else {
+                        unknown.push(matchup);
+                    }
+                });
+
+                unknown.forEach(matchup => {
+                    if (afc.length <= nfc.length) {
+                        afc.push(matchup);
+                    } else {
+                        nfc.push(matchup);
+                    }
+                });
+
+                return { afc, nfc };
+            };
+
+            const leftSide = document.createElement('div');
+            leftSide.className = 'playoffs-side playoffs-side-left';
+            const rightSide = document.createElement('div');
+            rightSide.className = 'playoffs-side playoffs-side-right';
+
+            [1, 2, 3].forEach(roundNumber => {
+                const round = ensureRound(roundNumber);
+                const { afc } = splitByConference(round.matchups || []);
+                const expected = expectedMatchups[roundNumber] || null;
+
+                const leftColumn = buildRoundColumn(round, afc, expected);
+                if (leftColumn) {
+                    leftSide.appendChild(leftColumn);
+                }
+            });
+
+            [3, 2, 1].forEach(roundNumber => {
+                const round = ensureRound(roundNumber);
+                const { nfc } = splitByConference(round.matchups || []);
+                const expected = expectedMatchups[roundNumber] || null;
+
+                const rightColumn = buildRoundColumn(round, nfc, expected);
+                if (rightColumn) {
+                    rightSide.appendChild(rightColumn);
+                }
+            });
+
+            const center = document.createElement('div');
+            center.className = 'playoffs-center';
+            const finalRound = ensureRound(5);
+            const centerColumn = buildRoundColumn(finalRound, finalRound.matchups || [], expectedMatchups[5]);
+            if (centerColumn) {
+                centerColumn.classList.add('playoff-round-final');
+                const logo = document.createElement('img');
+                logo.className = 'playoff-center-logo';
+                logo.alt = 'Super Bowl logo';
+                logo.loading = 'lazy';
+                logo.src = 'https://static.www.nfl.com/league/apps/web/experiences/playoffbracket/2026/playoffbracket-sb-logo.svg';
+                logo.onerror = () => logo.remove();
+                const matchupStack = centerColumn.querySelector('.playoff-matchups');
+                if (matchupStack) {
+                    centerColumn.insertBefore(logo, matchupStack);
+                } else {
+                    centerColumn.appendChild(logo);
+                }
+                center.appendChild(centerColumn);
+            }
+
+            bracket.appendChild(leftSide);
+            bracket.appendChild(center);
+            bracket.appendChild(rightSide);
+        } else {
+            data.rounds.forEach(round => {
+                const column = buildRoundColumn(round, round.matchups || []);
+                if (column) {
+                    bracket.appendChild(column);
+                }
+            });
+        }
+
+        roundsEl.appendChild(bracket);
+        section.classList.remove('hidden');
     },
 
     /**

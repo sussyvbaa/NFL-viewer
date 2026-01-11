@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https://a.espncdn.com https://*.espncdn.com https://streamed.pk https://*.streamed.pk; frame-src https://embedsports.top https://*.embedsports.top; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; connect-src 'self' https://streamed.pk https://site.api.espn.com https://nfl-viewer-api.onrender.com;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https://a.espncdn.com https://*.espncdn.com https://streamed.pk https://*.streamed.pk https://static.www.nfl.com; frame-src https://embedsports.top https://*.embedsports.top; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; connect-src 'self' https://streamed.pk https://site.api.espn.com https://nfl-viewer-api.onrender.com;">
     <title>Sports Viewer</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='16' fill='%23ffffff'/%3E%3Cpath d='M22 62c7-12 23-30 52-28' stroke='%23000000' stroke-width='10' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='66' cy='40' r='9' fill='%23000000'/%3E%3C/svg%3E">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -251,6 +251,16 @@
                 </label>
             </div>
             <div id="standings-status" class="data-status"></div>
+            <section id="playoffs-section" class="playoffs-section hidden">
+                <div class="playoffs-header">
+                    <h2 class="playoffs-title">Playoff Bracket</h2>
+                    <span id="playoffs-subtitle" class="playoffs-subtitle"></span>
+                </div>
+                <div id="playoffs-rounds" class="playoffs-rounds"></div>
+            </section>
+            <div id="playoffs-empty" class="no-games hidden">
+                <p>Playoff bracket will appear when the league enters the postseason.</p>
+            </div>
             <div id="standings-content" class="standings-content"></div>
             <div id="standings-empty" class="no-games hidden">
                 <p>No standings data available.</p>
