@@ -104,17 +104,112 @@ const App = {
 
         // Handle keyboard shortcuts
         document.addEventListener('keydown', (e) => {
-            // ESC to exit fullscreen
-            if (e.key === 'Escape' && document.fullscreenElement) {
-                document.exitFullscreen();
+            const isInput = document.activeElement.tagName === 'INPUT' || 
+                           document.activeElement.tagName === 'TEXTAREA';
+            const shortcutsOverlay = document.getElementById('shortcuts-overlay');
+            const settingsModal = document.getElementById('settings-modal');
+            
+            // ESC to close overlays or exit fullscreen
+            if (e.key === 'Escape') {
+                if (shortcutsOverlay?.classList.contains('is-open')) {
+                    this.toggleShortcuts(false);
+                    return;
+                }
+                if (settingsModal?.classList.contains('is-open')) {
+                    UI.toggleSettings(false);
+                    return;
+                }
+                if (document.fullscreenElement) {
+                    document.exitFullscreen();
+                }
+                return;
+            }
+            
+            // Skip other shortcuts if in input
+            if (isInput) return;
+            
+            // ? or Shift+/ to show shortcuts
+            if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
+                e.preventDefault();
+                this.toggleShortcuts();
+                return;
             }
 
-            // / to go home (if not in input)
-            if (e.key === '/' && document.activeElement.tagName !== 'INPUT') {
+            // / to go home
+            if (e.key === '/') {
                 e.preventDefault();
                 Router.navigate('/');
+                return;
+            }
+            
+            // m for multi-view
+            if (e.key === 'm' || e.key === 'M') {
+                e.preventDefault();
+                Router.navigate('/multi');
+                return;
+            }
+            
+            // s for standings
+            if (e.key === 's' || e.key === 'S') {
+                e.preventDefault();
+                Router.navigate('/standings');
+                return;
+            }
+            
+            // , for settings
+            if (e.key === ',') {
+                e.preventDefault();
+                UI.toggleSettings(true);
+                return;
+            }
+            
+            // r for refresh
+            if (e.key === 'r' || e.key === 'R') {
+                e.preventDefault();
+                const refreshBtn = document.getElementById('refresh-btn');
+                if (refreshBtn) refreshBtn.click();
+                return;
+            }
+            
+            // f for fullscreen (on watch page)
+            if (e.key === 'f' || e.key === 'F') {
+                const videoContainer = document.querySelector('.embed-container');
+                if (videoContainer) {
+                    e.preventDefault();
+                    if (document.fullscreenElement) {
+                        document.exitFullscreen();
+                    } else {
+                        videoContainer.requestFullscreen();
+                    }
+                }
+                return;
+            }
+            
+            // ] for next stream
+            if (e.key === ']') {
+                const activeBtn = document.querySelector('.stream-btn.active');
+                const nextBtn = activeBtn?.nextElementSibling;
+                if (nextBtn?.classList.contains('stream-btn')) {
+                    e.preventDefault();
+                    nextBtn.click();
+                }
+                return;
+            }
+            
+            // [ for previous stream
+            if (e.key === '[') {
+                const activeBtn = document.querySelector('.stream-btn.active');
+                const prevBtn = activeBtn?.previousElementSibling;
+                if (prevBtn?.classList.contains('stream-btn')) {
+                    e.preventDefault();
+                    prevBtn.click();
+                }
+                return;
             }
         });
+        
+        // Setup shortcuts overlay
+        this.setupShortcutsOverlay();
 
         // Handle clicks on dynamically created elements
         document.addEventListener('click', (e) => {
@@ -129,6 +224,39 @@ const App = {
                 }
             }
         });
+    },
+    
+    setupShortcutsOverlay() {
+        const overlay = document.getElementById('shortcuts-overlay');
+        const hint = document.getElementById('shortcuts-hint');
+        if (!overlay) return;
+        
+        const closeBtn = overlay.querySelector('.shortcuts-overlay__close');
+        const backdrop = overlay.querySelector('.shortcuts-overlay__backdrop');
+        
+        closeBtn?.addEventListener('click', () => this.toggleShortcuts(false));
+        backdrop?.addEventListener('click', () => this.toggleShortcuts(false));
+        hint?.addEventListener('click', () => this.toggleShortcuts(true));
+    },
+    
+    toggleShortcuts(show) {
+        const overlay = document.getElementById('shortcuts-overlay');
+        const hint = document.getElementById('shortcuts-hint');
+        if (!overlay) return;
+        
+        const isOpen = overlay.classList.contains('is-open');
+        const shouldShow = show !== undefined ? show : !isOpen;
+        
+        if (shouldShow) {
+            overlay.classList.add('is-open');
+            overlay.setAttribute('aria-hidden', 'false');
+            document.body.classList.add('shortcuts-open');
+            if (hint) hint.style.display = 'none';
+        } else {
+            overlay.classList.remove('is-open');
+            overlay.setAttribute('aria-hidden', 'true');
+            document.body.classList.remove('shortcuts-open');
+        }
     }
 };
 

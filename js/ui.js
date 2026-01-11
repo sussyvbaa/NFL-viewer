@@ -733,31 +733,36 @@ const UI = {
         watchBtn.href = game.watchUrl || `#/watch/${game.slug}`;
 
         // Multi-view button
-            const multiBtn = card.querySelector('.multi-btn');
-            if (multiBtn) {
-                const leagueKey = game.league || Config.DEFAULT_LEAGUE;
-                const inMulti = Storage.isInMultiView(game.slug, leagueKey);
-                if (inMulti) {
-                    multiBtn.textContent = '✓';
-                    multiBtn.disabled = true;
-                    multiBtn.title = 'Added to Multi-View';
+        const multiBtn = card.querySelector('.multi-btn');
+        if (multiBtn) {
+            const leagueKey = game.league || Config.DEFAULT_LEAGUE;
+            const inMulti = Storage.isInMultiView(game.slug, leagueKey);
+            if (inMulti) {
+                multiBtn.classList.add('in-multi');
+                multiBtn.title = 'Remove from Multi-View';
+            }
+            multiBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                if (multiBtn.classList.contains('in-multi')) {
+                    Storage.removeFromMultiView(game.slug, leagueKey);
+                    multiBtn.classList.remove('in-multi');
+                    multiBtn.title = 'Add to multi-view';
+                    this.updateMultiViewCount();
+                    return;
                 }
-                multiBtn.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
 
-                    const result = Storage.addToMultiView(game);
-                    if (result.added) {
-                        multiBtn.textContent = '✓';
-                        multiBtn.disabled = true;
-                        multiBtn.title = 'Added to Multi-View';
-                        this.updateMultiViewCount();
-                    } else if (result.reason === 'limit') {
-
+                const result = Storage.addToMultiView(game);
+                if (result.added) {
+                    multiBtn.classList.add('in-multi');
+                    multiBtn.title = 'Remove from Multi-View';
+                    this.updateMultiViewCount();
+                } else if (result.reason === 'limit') {
                     alert(`Multi-view supports up to ${Config.MULTI_VIEW_MAX} games.`);
                 } else if (result.reason === 'exists') {
-                    multiBtn.textContent = '✓';
-                    multiBtn.disabled = true;
+                    // Should be handled by inMulti check, but just in case
+                    multiBtn.classList.add('in-multi');
                 } else {
                     alert('Unable to add this game to multi-view.');
                 }

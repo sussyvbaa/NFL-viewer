@@ -91,6 +91,62 @@
         </div>
     </div>
 
+    <div id="shortcuts-overlay" class="shortcuts-overlay" aria-hidden="true">
+        <div class="shortcuts-overlay__backdrop"></div>
+        <div class="shortcuts-overlay__content" role="dialog" aria-modal="true">
+            <div class="shortcuts-overlay__header">
+                <h2 class="shortcuts-overlay__title">Keyboard Shortcuts</h2>
+                <button class="shortcuts-overlay__close" type="button" aria-label="Close">&times;</button>
+            </div>
+            <div class="shortcuts-grid">
+                <div class="shortcut-item">
+                    <span class="shortcut-action">Go Home</span>
+                    <div class="shortcut-keys"><kbd class="shortcut-key">/</kbd></div>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-action">Multi-View</span>
+                    <div class="shortcut-keys"><kbd class="shortcut-key">M</kbd></div>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-action">Standings</span>
+                    <div class="shortcut-keys"><kbd class="shortcut-key">S</kbd></div>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-action">Settings</span>
+                    <div class="shortcut-keys"><kbd class="shortcut-key">,</kbd></div>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-action">Refresh Games</span>
+                    <div class="shortcut-keys"><kbd class="shortcut-key">R</kbd></div>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-action">Exit / Close</span>
+                    <div class="shortcut-keys"><kbd class="shortcut-key">Esc</kbd></div>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-action">Next Stream</span>
+                    <div class="shortcut-keys"><kbd class="shortcut-key">]</kbd></div>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-action">Prev Stream</span>
+                    <div class="shortcut-keys"><kbd class="shortcut-key">[</kbd></div>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-action">Fullscreen</span>
+                    <div class="shortcut-keys"><kbd class="shortcut-key">F</kbd></div>
+                </div>
+                <div class="shortcut-item">
+                    <span class="shortcut-action">Show Shortcuts</span>
+                    <div class="shortcut-keys"><kbd class="shortcut-key">?</kbd></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="shortcuts-hint" id="shortcuts-hint">
+        Press <kbd class="shortcut-key">?</kbd> for shortcuts
+    </div>
+
     <!-- Templates -->
     <template id="games-list-template">
         <div class="games-container">
