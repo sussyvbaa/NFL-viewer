@@ -694,6 +694,12 @@ body.is-ios .embed-container iframe {
     opacity: 0.5;
 }
 
+body:not(.advanced-mode) .stream-controls label[for="stream-select"],
+body:not(.advanced-mode) .stream-controls label[for="source-select"],
+body:not(.advanced-mode) .stream-controls .stream-select,
+body:not(.advanced-mode) .stream-controls #source-select {
+    display: none;
+}
 
 .video-wrapper {
     position: relative;

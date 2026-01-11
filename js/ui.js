@@ -309,6 +309,7 @@ const UI = {
         }
         streamLabel?.classList.toggle('is-disabled', !this.advancedMode);
         sourceLabel?.classList.toggle('is-disabled', !this.advancedMode);
+        document.body.classList.toggle('advanced-mode', this.advancedMode);
     },
 
     /**
@@ -547,13 +548,13 @@ const UI = {
     getGameDateKey(game) {
         const timestamp = this.getGameTimestamp(game);
         if (!timestamp) return 'tbd';
-        return new Date(timestamp).toISOString().slice(0, 10);
+        return new Date(timestamp).toLocaleDateString('en-CA');
     },
 
     formatGameDateLabel(game) {
         const timestamp = this.getGameTimestamp(game);
         if (!timestamp) return 'Date TBD';
-        const formatter = new Intl.DateTimeFormat('en-US', {
+        const formatter = new Intl.DateTimeFormat(undefined, {
             weekday: 'short',
             month: 'short',
             day: 'numeric'
