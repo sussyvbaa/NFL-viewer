@@ -1,0 +1,14 @@
+{
+  "name": "sports-viewer",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node backend/node/server.js",
+    "dev": "node backend/node/server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "morgan": "^1.10.0",
+    "node-fetch": "^2.7.0"
+  }
+}

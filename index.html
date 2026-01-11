@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https://a.espncdn.com https://*.espncdn.com https://streamed.pk https://*.streamed.pk; frame-src https://embedsports.top https://*.embedsports.top; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; connect-src 'self' https://streamed.pk https://site.api.espn.com;">
+    <title>Sports Viewer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <a href="#/" class="logo">Sports Viewer</a>
+                <nav class="nav">
+                    <a href="#/" class="nav-link">Games</a>
+                    <a href="#/standings" class="nav-link">Standings</a>
+                    <a href="#/multi" class="nav-link">Multi-View</a>
+                    <a href="#/add" class="nav-link">Add Game</a>
+                </nav>
+                <button id="settings-btn" class="btn btn-secondary settings-btn" type="button">Settings</button>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main id="main-content" class="main-content">
+            <!-- Content injected by router -->
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Streams provided by EmbedSports. For personal use only.</p>
+        </footer>
+    </div>
+
+    <div id="settings-modal" class="settings-modal" aria-hidden="true">
+        <div class="settings-modal__overlay"></div>
+        <div class="settings-modal__content" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+            <div class="settings-modal__header">
+                <h2 id="settings-title">Settings</h2>
+                <button class="btn btn-secondary btn-small settings-close" type="button">Close</button>
+            </div>
+            <div class="settings-modal__body">
+                <label class="settings-option">
+                    <span>Show posters</span>
+                    <input type="checkbox" id="settings-posters">
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Templates -->
+    <template id="games-list-template">
+        <div class="games-container">
+            <div class="page-header">
+                <h1 class="page-title">Games</h1>
+                <div class="page-actions">
+                    <a href="#/multi" class="btn btn-secondary multi-nav-btn">
+                        Multi-View <span id="multi-count" class="multi-count">0/4</span>
+                    </a>
+                    <button id="refresh-btn" class="btn btn-secondary refresh-btn" title="Refresh games">
+                        <span class="refresh-icon">&#8635;</span> Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="games-filter">
+                <button class="filter-btn active" data-filter="all">All</button>
+                <button class="filter-btn" data-filter="live">Live</button>
+                <button class="filter-btn" data-filter="upcoming">Upcoming</button>
+            </div>
+            <div class="league-filter">
+                <button class="league-btn active" data-league="all">All American</button>
+                <button class="league-btn" data-league="nfl">NFL</button>
+                <button class="league-btn" data-league="nba">NBA</button>
+                <button class="league-btn" data-league="mlb">MLB</button>
+                <button class="league-btn" data-league="nhl">NHL</button>
+            </div>
+            <div id="data-status" class="data-status"></div>
+            <div id="games-grid" class="games-grid">
+                <!-- Games injected here -->
+            </div>
+            <div id="no-games" class="no-games hidden">
+                <p>No games available.</p>
+                <a href="#/add" class="btn btn-primary">Add a Game</a>
+            </div>
+        </div>
+    </template>
+
+    <template id="game-card-template">
+        <article class="game-card" data-game-id="">
+            <div class="game-poster hidden" aria-hidden="true"></div>
+            <div class="game-status"></div>
+            <div class="game-teams">
+                <div class="team-block">
+                    <img class="team-logo away-logo hidden" alt="" loading="lazy">
+                    <span class="team away-team"></span>
+                </div>
+                <span class="vs">@</span>
+                <div class="team-block">
+                    <img class="team-logo home-logo hidden" alt="" loading="lazy">
+                    <span class="team home-team"></span>
+                </div>
+            </div>
+            <div class="game-title"></div>
+            <div class="game-time"></div>
+            <div class="game-actions">
+                <a href="" class="btn btn-primary watch-btn">Watch</a>
+                <button class="btn btn-secondary multi-btn" title="Add to multi-view">Multi</button>
+                <button class="btn btn-secondary delete-btn" title="Remove game">Remove</button>
+            </div>
+        </article>
+    </template>
+
+    <template id="watch-template">
+        <div class="watch-container">
+            <div class="watch-header">
+                <a href="#/" class="back-link">&larr; Back to Games</a>
+                <h1 class="watch-title"></h1>
+                <div class="watch-matchup hidden">
+                    <div class="team-block">
+                        <img class="team-logo away-logo hidden" alt="" loading="lazy">
+                        <span class="team away-team"></span>
+                    </div>
+                    <span class="vs">@</span>
+                    <div class="team-block">
+                        <img class="team-logo home-logo hidden" alt="" loading="lazy">
+                        <span class="team home-team"></span>
+                    </div>
+                </div>
+                <div class="stream-controls">
+                    <label for="stream-select">Stream:</label>
+                    <select id="stream-select" class="stream-select"></select>
+                    <button id="fullscreen-btn" class="btn btn-secondary">Fullscreen</button>
+                </div>
+            </div>
+            <div class="video-wrapper">
+                <div id="embed-container" class="embed-container">
+                    <!-- Iframe injected here -->
+                </div>
+                <div id="embed-error" class="embed-error hidden">
+                    <div class="error-content">
+                        <h2>Stream Unavailable</h2>
+                        <p>The stream failed to load. This may be due to:</p>
+                        <ul>
+                            <li>The game hasn't started yet</li>
+                            <li>The stream source is temporarily unavailable</li>
+                            <li>The embed URL may be incorrect</li>
+                        </ul>
+                        <div class="error-actions">
+                            <button id="retry-btn" class="btn btn-primary">Retry</button>
+                            <button id="try-next-btn" class="btn btn-secondary">Try Next Stream</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="embed-loading" class="embed-loading">
+                    <div class="loader"></div>
+                    <p>Loading stream...</p>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <template id="multi-view-template">
+        <div class="multi-view-container">
+            <div class="page-header">
+                <div>
+                    <a href="#/" class="back-link">&larr; Back to Games</a>
+                    <h1 class="page-title">Multi-View</h1>
+                </div>
+                <div class="page-actions">
+                    <button id="multi-picker-toggle" class="btn btn-secondary">Add Games</button>
+                    <button id="multi-clear-btn" class="btn btn-secondary">Clear All</button>
+                    <div class="multi-layout-control">
+                        <label for="multi-layout">Layout</label>
+                        <select id="multi-layout" class="standings-select">
+                            <option value="tiling">Hyprland</option>
+                            <option value="windows">Windows</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <p class="multi-subtitle">Add up to 4 games to watch at the same time.</p>
+            <section id="multi-picker" class="multi-picker hidden">
+                <div class="multi-picker-header">
+                    <div class="multi-picker-title">Quick Add</div>
+                    <div class="multi-picker-controls">
+                        <select id="multi-picker-league" class="standings-select"></select>
+                        <select id="multi-picker-filter" class="standings-select">
+                            <option value="live">Live</option>
+                            <option value="upcoming">Upcoming</option>
+                            <option value="all">All</option>
+                        </select>
+                        <input id="multi-picker-search" type="search" placeholder="Search teams or matchups">
+                    </div>
+                </div>
+                <div id="multi-picker-list" class="multi-picker-list"></div>
+            </section>
+            <div id="multi-status" class="data-status"></div>
+            <div id="multi-grid" class="multi-grid"></div>
+            <div id="multi-empty" class="multi-empty hidden">
+                <p>No games selected yet.</p>
+                <a href="#/" class="btn btn-primary">Browse Games</a>
+            </div>
+        </div>
+    </template>
+
+    <template id="standings-template">
+        <div class="standings-container">
+            <div class="page-header">
+                <h1 class="page-title">Standings</h1>
+                <div class="page-actions">
+                    <select id="standings-league" class="standings-select"></select>
+                    <button id="standings-refresh" class="btn btn-secondary">Refresh</button>
+                </div>
+            </div>
+            <div class="standings-options">
+                <label class="standings-option">
+                    <span>View</span>
+                    <select id="standings-view" class="standings-select"></select>
+                </label>
+                <label class="standings-option">
+                    <span>Sort</span>
+                    <select id="standings-sort" class="standings-select"></select>
+                </label>
+                <label class="standings-option">
+                    <span>Season</span>
+                    <select id="standings-season" class="standings-select"></select>
+                </label>
+                <label class="standings-toggle">
+                    <input type="checkbox" id="standings-rank">
+                    Show ranks
+                </label>
+            </div>
+            <div id="standings-status" class="data-status"></div>
+            <div id="standings-content" class="standings-content"></div>
+            <div id="standings-empty" class="no-games hidden">
+                <p>No standings data available.</p>
+            </div>
+        </div>
+    </template>
+
+    <template id="add-game-template">
+        <div class="add-game-container">
+            <h1 class="page-title">Add New Game</h1>
+            <form id="add-game-form" class="add-game-form">
+                <div class="form-group">
+                    <label for="league-select">League</label>
+                    <select id="league-select" name="league" required>
+                        <option value="nfl">NFL</option>
+                        <option value="nba">NBA</option>
+                        <option value="mlb">MLB</option>
+                        <option value="nhl">NHL</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="away-team">Away Team</label>
+                    <select id="away-team" name="awayTeam" required>
+                        <option value="">Select team...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="home-team">Home Team</label>
+                    <select id="home-team" name="homeTeam" required>
+                        <option value="">Select team...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="game-time">Game Time (optional)</label>
+                    <input type="datetime-local" id="game-time" name="gameTime">
+                </div>
+                <div class="form-group">
+                    <label for="is-live">
+                        <input type="checkbox" id="is-live" name="isLive">
+                        Game is currently live
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label for="custom-slug">Custom Slug (optional)</label>
+                    <input type="text" id="custom-slug" name="customSlug" placeholder="e.g., ppv-team1-vs-team2">
+                    <small class="form-hint">Leave blank to auto-generate from team names</small>
+                </div>
+                <div class="form-preview">
+                    <h3>Preview</h3>
+                    <p>Slug: <code id="slug-preview">-</code></p>
+                    <p>Embed URL: <code id="url-preview">-</code></p>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">Add Game</button>
+                    <a href="#/" class="btn btn-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </template>
+
+    <template id="not-found-template">
+        <div class="not-found">
+            <h1>404</h1>
+            <p>Game not found</p>
+            <a href="#/" class="btn btn-primary">Back to Games</a>
+        </div>
+    </template>
+
+    <!-- JavaScript Modules -->
+    <script src="js/config.js"></script>
+    <script src="js/teams.js"></script>
+    <script src="js/embed.js"></script>
+    <script src="js/storage.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/router.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

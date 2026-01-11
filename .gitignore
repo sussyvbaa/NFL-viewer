@@ -1,0 +1,7 @@
+node_modules/
+backend/python/data/
+backend/python/__pycache__/
+*.pyc
+*.log
+opencode/
+opencode
