@@ -563,9 +563,22 @@ body.is-ios .embed-container iframe {
     background-color: transparent;
     border: none;
     padding: 0;
-    flex-shrink: 0;
-    filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.45));
 }
+
+.team-score {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    padding: 0.15rem 0.45rem;
+    margin-left: 0.35rem;
+    border-radius: 999px;
+    background-color: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
 
 .team {
     font-size: 1.15rem;
@@ -1415,6 +1428,11 @@ body.is-mobile .game-teams {
 body.is-mobile .team-logo {
     width: 32px;
     height: 32px;
+}
+
+body.is-mobile .team-score {
+    font-size: 0.65rem;
+    min-width: 20px;
 }
 
 body.is-mobile .game-title {

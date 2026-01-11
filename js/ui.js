@@ -39,6 +39,8 @@ const UI = {
     showPosters: true,
     // Advanced mode for stream controls
     advancedMode: false,
+    // Score display
+    showScores: true,
     // Device info
     deviceInfo: {
         isMobile: false,
@@ -173,6 +175,7 @@ const UI = {
         const settings = this.getSettings();
         this.showPosters = settings?.postersEnabled === true;
         this.advancedMode = settings?.advancedMode === true;
+        this.showScores = settings?.scoresEnabled !== false;
     },
 
     detectDevice() {
@@ -229,6 +232,7 @@ const UI = {
         const closeBtn = modal?.querySelector('.settings-close');
         const postersToggle = document.getElementById('settings-posters');
         const advancedToggle = document.getElementById('settings-advanced');
+        const scoresToggle = document.getElementById('settings-scores');
 
         if (!modal) return;
 
@@ -239,6 +243,9 @@ const UI = {
             }
             if (advancedToggle) {
                 advancedToggle.checked = this.advancedMode;
+            }
+            if (scoresToggle) {
+                scoresToggle.checked = this.showScores;
             }
             modal.classList.add('is-open');
             modal.setAttribute('aria-hidden', 'false');
@@ -274,6 +281,14 @@ const UI = {
             this.advancedMode = advancedToggle.checked;
             this.saveSettings({ advancedMode: this.advancedMode });
             this.updateAdvancedControls();
+        });
+
+        scoresToggle?.addEventListener('change', () => {
+            this.showScores = scoresToggle.checked;
+            this.saveSettings({ scoresEnabled: this.showScores });
+            if (document.getElementById('games-grid')) {
+                this.renderGames();
+            }
         });
 
         document.addEventListener('keydown', (event) => {
@@ -614,6 +629,28 @@ const UI = {
         const homeLogo = card.querySelector('.home-logo');
         this.setTeamLogo(awayLogo, game.awayTeam, game.league || Config.DEFAULT_LEAGUE);
         this.setTeamLogo(homeLogo, game.homeTeam, game.league || Config.DEFAULT_LEAGUE);
+
+        const awayScore = card.querySelector('.away-score');
+        const homeScore = card.querySelector('.home-score');
+        if (this.showScores) {
+            const awayValue = game.awayTeam?.score ?? game.awayScore;
+            const homeValue = game.homeTeam?.score ?? game.homeScore;
+            if (awayScore && awayValue !== undefined && awayValue !== null && awayValue !== '') {
+                awayScore.textContent = awayValue;
+                awayScore.classList.remove('hidden');
+            } else {
+                awayScore?.classList.add('hidden');
+            }
+            if (homeScore && homeValue !== undefined && homeValue !== null && homeValue !== '') {
+                homeScore.textContent = homeValue;
+                homeScore.classList.remove('hidden');
+            } else {
+                homeScore?.classList.add('hidden');
+            }
+        } else {
+            awayScore?.classList.add('hidden');
+            homeScore?.classList.add('hidden');
+        }
 
         // Title
         const title = card.querySelector('.game-title');
