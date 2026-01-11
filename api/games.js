@@ -3,7 +3,8 @@ const {
     buildGamesForAll,
     buildGamesForLeague,
     filterGames,
-    sortGames
+    sortGames,
+    applyLiveScores
 } = require('../lib/api-helpers');
 
 module.exports = async (req, res) => {
@@ -22,6 +23,7 @@ module.exports = async (req, res) => {
 
         games = filterGames(games, filterValue);
         games = sortGames(games, league);
+        games = await applyLiveScores(games);
 
         res.status(200).json({
             games,

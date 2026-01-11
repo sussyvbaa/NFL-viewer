@@ -3,7 +3,8 @@ const {
     buildGamesForAll,
     buildGamesForLeague,
     findGameBySlug,
-    sortGames
+    sortGames,
+    applyLiveScores
 } = require('../../lib/api-helpers');
 
 module.exports = async (req, res) => {
@@ -25,6 +26,7 @@ module.exports = async (req, res) => {
             ? buildGamesForAll(snapshot)
             : buildGamesForLeague(snapshot, league);
         games = sortGames(games, league);
+        games = await applyLiveScores(games);
 
         const match = findGameBySlug(games, slug);
         if (!match) {
