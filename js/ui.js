@@ -37,6 +37,8 @@ const UI = {
     multiViewLayout: 'tiling',
     // Poster visibility state
     showPosters: true,
+    // Advanced mode for stream controls
+    advancedMode: false,
     // Device info
     deviceInfo: {
         isMobile: false,
@@ -170,6 +172,7 @@ const UI = {
     loadPosterSetting() {
         const settings = this.getSettings();
         this.showPosters = settings?.postersEnabled === true;
+        this.advancedMode = settings?.advancedMode === true;
     },
 
     detectDevice() {
@@ -225,6 +228,7 @@ const UI = {
         const overlay = modal?.querySelector('.settings-modal__overlay');
         const closeBtn = modal?.querySelector('.settings-close');
         const postersToggle = document.getElementById('settings-posters');
+        const advancedToggle = document.getElementById('settings-advanced');
 
         if (!modal) return;
 
@@ -232,6 +236,9 @@ const UI = {
             this.loadPosterSetting();
             if (postersToggle) {
                 postersToggle.checked = this.showPosters;
+            }
+            if (advancedToggle) {
+                advancedToggle.checked = this.advancedMode;
             }
             modal.classList.add('is-open');
             modal.setAttribute('aria-hidden', 'false');
@@ -263,6 +270,12 @@ const UI = {
             }
         });
 
+        advancedToggle?.addEventListener('change', () => {
+            this.advancedMode = advancedToggle.checked;
+            this.saveSettings({ advancedMode: this.advancedMode });
+            this.updateAdvancedControls();
+        });
+
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape' && modal.classList.contains('is-open')) {
                 closeModal();
@@ -278,6 +291,24 @@ const UI = {
         if (!countEl) return;
         const count = Storage.getMultiViewGames().length;
         countEl.textContent = `${count}/${Config.MULTI_VIEW_MAX}`;
+    },
+
+    updateAdvancedControls() {
+        const streamSelect = document.getElementById('stream-select');
+        const sourceSelect = document.getElementById('source-select');
+        const streamLabel = document.querySelector('label[for="stream-select"]');
+        const sourceLabel = document.querySelector('label[for="source-select"]');
+
+        if (streamSelect) {
+            streamSelect.disabled = !this.advancedMode;
+            streamSelect.classList.toggle('is-disabled', !this.advancedMode);
+        }
+        if (sourceSelect) {
+            sourceSelect.disabled = !this.advancedMode;
+            sourceSelect.classList.toggle('is-disabled', !this.advancedMode);
+        }
+        streamLabel?.classList.toggle('is-disabled', !this.advancedMode);
+        sourceLabel?.classList.toggle('is-disabled', !this.advancedMode);
     },
 
     /**
@@ -448,7 +479,9 @@ const UI = {
                 return !apiKeys.has(`${leagueKey}:${EmbedUtil.sanitizeSlug(g.slug)}`);
             });
 
-            const allGames = [...enrichedApiGames, ...manualGames];
+            const allGames = [...enrichedApiGames, ...manualGames]
+                .filter(Boolean)
+                .sort((a, b) => this.getGameTimestamp(a) - this.getGameTimestamp(b));
 
             // Clear grid
             grid.innerHTML = '';
@@ -462,8 +495,17 @@ const UI = {
             grid.classList.remove('hidden');
             noGames?.classList.add('hidden');
 
-            // Render each game card
+            // Render grouped by date
+            let currentGroup = null;
             allGames.forEach(game => {
+                const groupKey = this.getGameDateKey(game);
+                if (groupKey !== currentGroup) {
+                    currentGroup = groupKey;
+                    const header = document.createElement('div');
+                    header.className = 'games-date';
+                    header.textContent = this.formatGameDateLabel(game);
+                    grid.appendChild(header);
+                }
                 const card = this.createGameCard(game);
                 grid.appendChild(card);
             });
@@ -490,6 +532,35 @@ const UI = {
      * @param {Object} game - Enriched game object
      * @returns {HTMLElement} Game card element
      */
+    getGameTimestamp(game) {
+        if (!game) return 0;
+        if (typeof game.timestamp === 'number') {
+            return game.timestamp;
+        }
+        if (game.gameTime) {
+            const parsed = new Date(game.gameTime).getTime();
+            return Number.isNaN(parsed) ? 0 : parsed;
+        }
+        return 0;
+    },
+
+    getGameDateKey(game) {
+        const timestamp = this.getGameTimestamp(game);
+        if (!timestamp) return 'tbd';
+        return new Date(timestamp).toISOString().slice(0, 10);
+    },
+
+    formatGameDateLabel(game) {
+        const timestamp = this.getGameTimestamp(game);
+        if (!timestamp) return 'Date TBD';
+        const formatter = new Intl.DateTimeFormat('en-US', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric'
+        });
+        return formatter.format(new Date(timestamp));
+    },
+
     createGameCard(game) {
         const fragment = this.getTemplate('game-card-template');
         const card = fragment.querySelector('.game-card');
@@ -515,7 +586,7 @@ const UI = {
             status.classList.add('upcoming');
         } else {
             status.textContent = 'Available';
-            status.classList.add('upcoming');
+            status.classList.add('available');
         }
 
         const posterEl = card.querySelector('.game-poster');
@@ -775,6 +846,7 @@ const UI = {
         // Set up source and stream selectors
         this.setupSourceSelector(enrichedGame);
         this.setupStreamSelector(this.embedState.currentLeague);
+        this.updateAdvancedControls();
 
         // Load the embed with the best source
         this.loadEmbed(enrichedGame.slug, 1, this.embedState.currentSource);
@@ -820,6 +892,7 @@ const UI = {
 
         // Set up stream selector
         this.setupStreamSelector(this.embedState.currentLeague);
+        this.updateAdvancedControls();
 
         // Load the embed
         this.loadEmbed(sanitizedSlug, 1);
@@ -880,6 +953,12 @@ const UI = {
 
         // Handle source change
         sourceSelect.addEventListener('change', () => {
+            if (!this.advancedMode) {
+                sourceSelect.value = game.sources.findIndex(src =>
+                    src.source === this.embedState.currentSource
+                );
+                return;
+            }
             const selectedIndex = parseInt(sourceSelect.value, 10);
             const selectedSource = game.sources[selectedIndex];
             if (selectedSource) {
@@ -910,6 +989,10 @@ const UI = {
 
         // Handle stream change
         select.addEventListener('change', () => {
+            if (!this.advancedMode) {
+                select.value = String(this.embedState.currentStreamId || 1);
+                return;
+            }
             const streamId = parseInt(select.value, 10);
             this.loadEmbed(this.embedState.currentSlug, streamId, this.embedState.currentSource);
         });

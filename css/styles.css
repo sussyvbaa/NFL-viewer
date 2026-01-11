@@ -421,6 +421,15 @@ body.is-ios .embed-container iframe {
     gap: 1.5rem;
 }
 
+.games-date {
+    grid-column: 1 / -1;
+    font-size: 0.8rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-top: 0.5rem;
+}
+
 .no-games {
     text-align: center;
     padding: 4rem 2rem;
@@ -525,6 +534,12 @@ body.is-ios .embed-container iframe {
 .game-status.ended {
     background-color: rgba(255, 255, 255, 0.04);
     color: var(--text-muted);
+}
+
+.game-status.available {
+    background-color: rgba(61, 227, 124, 0.18);
+    color: #caffdf;
+    border-color: rgba(61, 227, 124, 0.4);
 }
 
 .game-teams {
@@ -661,14 +676,24 @@ body.is-ios .embed-container iframe {
 }
 
 .stream-select {
-    padding: 0.5rem 0.75rem;
-    font-size: 0.85rem;
-    background-color: rgba(255, 255, 255, 0.06);
-    color: var(--text-primary);
-    border: 1px solid var(--border-color);
+    padding: 0.5rem 1rem;
     border-radius: 999px;
-    cursor: pointer;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    font-family: inherit;
 }
+
+.stream-select.is-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.stream-controls label.is-disabled {
+    opacity: 0.5;
+}
+
 
 .video-wrapper {
     position: relative;
