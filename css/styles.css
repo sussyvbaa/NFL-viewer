@@ -242,6 +242,18 @@ body.settings-open {
     overflow: hidden;
 }
 
+body.is-ios .video-wrapper {
+    padding-bottom: env(safe-area-inset-bottom);
+}
+
+body.is-ios .stream-controls {
+    padding-bottom: 0.5rem;
+}
+
+body.is-ios .embed-container iframe {
+    border-radius: 0;
+}
+
 /* ============================================
    Footer
    ============================================ */

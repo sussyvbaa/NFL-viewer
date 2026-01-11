@@ -37,6 +37,11 @@ const UI = {
     multiViewLayout: 'tiling',
     // Poster visibility state
     showPosters: true,
+    // Device info
+    deviceInfo: {
+        isMobile: false,
+        isIOS: false
+    },
     // Current embed state
     embedState: {
         currentStreamId: 1,
@@ -54,6 +59,7 @@ const UI = {
     init() {
         this.mainContent = document.getElementById('main-content');
         this.cacheTemplates();
+        this.detectDevice();
         this.loadPosterSetting();
         this.setupSettingsModal();
     },
@@ -163,7 +169,54 @@ const UI = {
 
     loadPosterSetting() {
         const settings = this.getSettings();
-        this.showPosters = settings?.postersEnabled !== false;
+        this.showPosters = settings?.postersEnabled === true;
+    },
+
+    detectDevice() {
+        if (typeof navigator === 'undefined') {
+            return;
+        }
+        const ua = navigator.userAgent || '';
+        const isIOS = /iPad|iPhone|iPod/i.test(ua) ||
+            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(ua) || navigator.maxTouchPoints > 1;
+        this.deviceInfo = {
+            isMobile,
+            isIOS
+        };
+        document.body.classList.toggle('is-mobile', isMobile);
+        document.body.classList.toggle('is-ios', isIOS);
+    },
+
+    applyMobileEmbedPolicy(iframe, url) {
+        if (!iframe || !this.deviceInfo?.isIOS) {
+            return;
+        }
+        iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-presentation');
+        iframe.setAttribute('allow', 'fullscreen; autoplay; encrypted-media; picture-in-picture');
+        iframe.setAttribute('allowfullscreen', '');
+
+        iframe.addEventListener('load', () => {
+            if (!iframe.contentWindow) return;
+            let attempts = 0;
+            const maxAttempts = 12;
+            const checkRedirect = () => {
+                attempts += 1;
+                if (attempts > maxAttempts) return;
+                try {
+                    const currentHref = iframe.contentWindow.location.href;
+                    if (currentHref && !currentHref.includes('embedsports.top')) {
+                        iframe.contentWindow.stop();
+                        iframe.src = url;
+                        return;
+                    }
+                } catch (error) {
+                    // Cross-origin access blocked; cannot inspect location.
+                }
+                setTimeout(checkRedirect, 500);
+            };
+            setTimeout(checkRedirect, 500);
+        }, { once: true });
     },
 
     setupSettingsModal() {
@@ -910,6 +963,8 @@ const UI = {
             this.showEmbedError(slug);
             return;
         }
+
+        this.applyMobileEmbedPolicy(iframe, url);
 
         // Handle iframe load events
         iframe.addEventListener('load', () => {
@@ -1965,6 +2020,8 @@ const UI = {
             errorEl?.classList.remove('hidden');
             return;
         }
+
+        this.applyMobileEmbedPolicy(iframe, url);
 
         iframe.addEventListener('load', () => {
             loadingEl?.classList.add('hidden');
