@@ -41,6 +41,8 @@ const UI = {
     advancedMode: false,
     // Score display
     showScores: true,
+    // Auto cycle sources
+    autoCycleEnabled: true,
     // Device info
     deviceInfo: {
         isMobile: false,
@@ -48,14 +50,18 @@ const UI = {
     },
     // Current embed state
     embedState: {
+        currentSlug: null,
         currentStreamId: 1,
         currentSource: 'admin',
-        currentSlug: '',
-        currentLeague: Config.DEFAULT_LEAGUE,
-        sources: [], // Available sources for current game
+        currentLeague: null,
+        sources: [],
         loading: false,
-        error: false
+        error: false,
+        sourceFailures: new Set(),
+        lastSlug: null,
+        autoCycleActive: false
     },
+
 
     /**
      * Initialize UI module
@@ -176,6 +182,7 @@ const UI = {
         this.showPosters = settings?.postersEnabled === true;
         this.advancedMode = settings?.advancedMode === true;
         this.showScores = settings?.scoresEnabled !== false;
+        this.autoCycleEnabled = settings?.autoCycleEnabled !== false;
     },
 
     detectDevice() {
@@ -185,7 +192,9 @@ const UI = {
         const ua = navigator.userAgent || '';
         const isIOS = /iPad|iPhone|iPod/i.test(ua) ||
             (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-        const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(ua) || navigator.maxTouchPoints > 1;
+        const isMobileAgent = /Mobi|Android|iPhone|iPad|iPod/i.test(ua);
+        const isMobileViewport = window.matchMedia('(max-width: 768px)').matches;
+        const isMobile = isMobileAgent || isMobileViewport;
         this.deviceInfo = {
             isMobile,
             isIOS
@@ -195,9 +204,13 @@ const UI = {
     },
 
     applyMobileEmbedPolicy(iframe, url) {
-        if (!iframe || !this.deviceInfo?.isIOS) {
+        if (!iframe) {
             return;
         }
+        if (!this.deviceInfo?.isIOS) {
+            return;
+        }
+
         iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-presentation');
         iframe.setAttribute('allow', 'fullscreen; autoplay; encrypted-media; picture-in-picture');
         iframe.setAttribute('allowfullscreen', '');
@@ -233,6 +246,7 @@ const UI = {
         const postersToggle = document.getElementById('settings-posters');
         const advancedToggle = document.getElementById('settings-advanced');
         const scoresToggle = document.getElementById('settings-scores');
+        const autoCycleToggle = document.getElementById('settings-autocycle');
 
         if (!modal) return;
 
@@ -246,6 +260,9 @@ const UI = {
             }
             if (scoresToggle) {
                 scoresToggle.checked = this.showScores;
+            }
+            if (autoCycleToggle) {
+                autoCycleToggle.checked = this.autoCycleEnabled;
             }
             modal.classList.add('is-open');
             modal.setAttribute('aria-hidden', 'false');
@@ -289,6 +306,11 @@ const UI = {
             if (document.getElementById('games-grid')) {
                 this.renderGames();
             }
+        });
+
+        autoCycleToggle?.addEventListener('change', () => {
+            this.autoCycleEnabled = autoCycleToggle.checked;
+            this.saveSettings({ autoCycleEnabled: this.autoCycleEnabled });
         });
 
         document.addEventListener('keydown', (event) => {
@@ -495,7 +517,7 @@ const UI = {
                 return !apiKeys.has(`${leagueKey}:${EmbedUtil.sanitizeSlug(g.slug)}`);
             });
 
-            const allGames = [...enrichedApiGames, ...manualGames]
+            const allGames = this.dedupeGames([...enrichedApiGames, ...manualGames])
                 .filter(Boolean)
                 .sort((a, b) => this.getGameTimestamp(a) - this.getGameTimestamp(b));
 
@@ -575,6 +597,50 @@ const UI = {
             day: 'numeric'
         });
         return formatter.format(new Date(timestamp));
+    },
+
+    normalizeDedupeName(value) {
+        return (value || '')
+            .toString()
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, ' ')
+            .trim();
+    },
+
+    getDedupeKey(game) {
+        const dateKey = this.getGameDateKey(game);
+        const awayName = this.normalizeDedupeName(game?.awayTeam?.name || game?.teams?.away?.name || '');
+        const homeName = this.normalizeDedupeName(game?.homeTeam?.name || game?.teams?.home?.name || '');
+        let pair = [awayName, homeName].filter(Boolean).sort();
+        if (pair.length < 2 && game?.title) {
+            const parts = game.title.split(/\s+vs\.?\s+|\s+@\s+/i);
+            pair = parts.map(name => this.normalizeDedupeName(name)).filter(Boolean).sort();
+        }
+        if (pair.length < 2) {
+            return `${game?.league || 'all'}:${dateKey}:${this.normalizeDedupeName(game?.title || '')}`;
+        }
+        return `${game?.league || 'all'}:${dateKey}:${pair.join('-')}`;
+    },
+
+    dedupeGames(games) {
+        const map = new Map();
+        (games || []).forEach(game => {
+            const key = this.getDedupeKey(game);
+            if (!key) return;
+            const existing = map.get(key);
+            if (!existing) {
+                map.set(key, game);
+                return;
+            }
+            if (game.isLive && !existing.isLive) {
+                map.set(key, game);
+                return;
+            }
+            if ((game.sources || []).length > (existing.sources || []).length) {
+                map.set(key, game);
+            }
+        });
+        return Array.from(map.values());
     },
 
     createGameCard(game) {
@@ -877,8 +943,9 @@ const UI = {
 
         // Store sources in embed state
         this.embedState.sources = enrichedGame.sources || [];
-        this.embedState.currentSource = enrichedGame.currentSource || 'admin';
-        this.embedState.currentSlug = enrichedGame.slug;
+        const adminSource = this.embedState.sources.find(source => source?.source === 'admin');
+        this.embedState.currentSource = adminSource ? 'admin' : (enrichedGame.currentSource || 'admin');
+        this.embedState.currentSlug = adminSource ? (adminSource.id || enrichedGame.slug) : enrichedGame.slug;
         this.embedState.currentLeague = enrichedGame.league || Config.DEFAULT_LEAGUE;
 
         // Set up source and stream selectors
@@ -933,7 +1000,7 @@ const UI = {
         this.updateAdvancedControls();
 
         // Load the embed
-        this.loadEmbed(sanitizedSlug, 1);
+        this.loadEmbed(sanitizedSlug, 1, 'admin');
 
         // Set up fullscreen button
         this.setupFullscreenButton();
@@ -1049,8 +1116,15 @@ const UI = {
 
         if (!container) return;
 
+        if (this.embedState.lastSlug !== slug) {
+            this.embedState.sourceFailures = new Set();
+            this.embedState.lastSlug = slug;
+            this.embedState.autoCycleActive = false;
+        }
+
         // Update state
         this.embedState.currentStreamId = streamId;
+        this.embedState.currentSource = sourceType;
         this.embedState.loading = true;
         this.embedState.error = false;
 
@@ -1090,12 +1164,18 @@ const UI = {
         // Handle iframe load events
         iframe.addEventListener('load', () => {
             this.embedState.loading = false;
+            this.embedState.autoCycleActive = false;
+            this.embedState.sourceFailures.clear();
             loadingEl?.classList.add('hidden');
         });
 
         // Handle load timeout
         const timeoutId = setTimeout(() => {
             if (this.embedState.loading) {
+                const didFallback = this.tryAutoSourceCycle(slug, streamId, sourceType);
+                if (didFallback) {
+                    return;
+                }
                 this.embedState.loading = false;
                 loadingEl?.classList.add('hidden');
                 // Don't show error on timeout - embed might still work
@@ -1157,6 +1237,34 @@ const UI = {
                 this.loadEmbed(slug, nextStream, this.embedState.currentSource);
             };
         }
+    },
+
+    tryAutoSourceCycle(slug, streamId, sourceType) {
+        if (!this.autoCycleEnabled || sourceType !== 'admin') {
+            return false;
+        }
+
+        const sources = this.embedState.sources || [];
+        if (!sources.length || this.embedState.autoCycleActive) {
+            return false;
+        }
+
+        this.embedState.sourceFailures.add(sourceType);
+        const nextSource = sources.find(source =>
+            source?.source && source.source !== sourceType && !this.embedState.sourceFailures.has(source.source)
+        );
+
+        if (!nextSource) {
+            this.embedState.autoCycleActive = false;
+            return false;
+        }
+
+        this.embedState.autoCycleActive = true;
+        this.embedState.sourceFailures.add(nextSource.source);
+        this.embedState.currentSource = nextSource.source;
+        this.embedState.currentSlug = nextSource.id;
+        this.loadEmbed(nextSource.id, streamId, nextSource.source);
+        return true;
     },
 
     /**

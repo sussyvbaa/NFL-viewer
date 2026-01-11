@@ -7,9 +7,35 @@ const {
     applyLiveScores
 } = require('../lib/api-helpers');
 
+const cache = {
+    entries: new Map(),
+    ttlMs: parseInt(process.env.GAMES_CACHE_TTL_MS || '45000', 10)
+};
+
+const buildCacheKey = (filterValue, league) => `${filterValue}:${league}`;
+
 module.exports = async (req, res) => {
     const filterValue = (req.query.filter || 'all').toString();
     const league = (req.query.league || 'all').toString().toLowerCase();
+    const cacheKey = buildCacheKey(filterValue, league);
+    const now = Date.now();
+    const entry = cache.entries.get(cacheKey);
+
+    if (entry && (now - entry.timestamp) < cache.ttlMs) {
+        res.status(200).json({
+            games: entry.games,
+            meta: {
+                count: entry.games.length,
+                filter: filterValue,
+                league,
+                cacheAgeSec: Math.floor((now - entry.timestamp) / 1000),
+                stale: false,
+                upstreamBase: entry.source,
+                fromCache: true
+            }
+        });
+        return;
+    }
 
     try {
         const [liveMatches, liveSource] = await fetchMatches('/matches/live');
@@ -25,6 +51,12 @@ module.exports = async (req, res) => {
         games = sortGames(games, league);
         games = await applyLiveScores(games);
 
+        cache.entries.set(cacheKey, {
+            games,
+            timestamp: Date.now(),
+            source
+        });
+
         res.status(200).json({
             games,
             meta: {
@@ -33,10 +65,27 @@ module.exports = async (req, res) => {
                 league,
                 cacheAgeSec: 0,
                 stale: false,
-                upstreamBase: source
+                upstreamBase: source,
+                fromCache: false
             }
         });
     } catch (error) {
+        if (entry) {
+            res.status(200).json({
+                games: entry.games,
+                meta: {
+                    count: entry.games.length,
+                    filter: filterValue,
+                    league,
+                    cacheAgeSec: Math.floor((now - entry.timestamp) / 1000),
+                    stale: true,
+                    upstreamBase: entry.source,
+                    fromCache: true,
+                    error: 'upstream_unavailable'
+                }
+            });
+            return;
+        }
         res.status(502).json({
             error: 'upstream_unavailable',
             message: error.message,
