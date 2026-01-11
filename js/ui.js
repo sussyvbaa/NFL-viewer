@@ -660,9 +660,11 @@ const UI = {
         if (game.isLive) {
             status.textContent = 'Live';
             status.classList.add('live');
+            card.classList.add('is-live');
         } else if (game.isEnded) {
             status.textContent = 'Final';
             status.classList.add('ended');
+            card.classList.add('is-ended');
         } else if (game.isUpcoming || (game.gameTime && new Date(game.gameTime) > new Date())) {
             status.textContent = 'Upcoming';
             status.classList.add('upcoming');
@@ -731,27 +733,30 @@ const UI = {
         watchBtn.href = game.watchUrl || `#/watch/${game.slug}`;
 
         // Multi-view button
-        const multiBtn = card.querySelector('.multi-btn');
-        if (multiBtn) {
-            const leagueKey = game.league || Config.DEFAULT_LEAGUE;
-            const inMulti = Storage.isInMultiView(game.slug, leagueKey);
-            if (inMulti) {
-                multiBtn.textContent = 'In Multi';
-                multiBtn.disabled = true;
-            }
-            multiBtn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-
-                const result = Storage.addToMultiView(game);
-                if (result.added) {
-                    multiBtn.textContent = 'In Multi';
+            const multiBtn = card.querySelector('.multi-btn');
+            if (multiBtn) {
+                const leagueKey = game.league || Config.DEFAULT_LEAGUE;
+                const inMulti = Storage.isInMultiView(game.slug, leagueKey);
+                if (inMulti) {
+                    multiBtn.textContent = '✓';
                     multiBtn.disabled = true;
-                    this.updateMultiViewCount();
-                } else if (result.reason === 'limit') {
+                    multiBtn.title = 'Added to Multi-View';
+                }
+                multiBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    const result = Storage.addToMultiView(game);
+                    if (result.added) {
+                        multiBtn.textContent = '✓';
+                        multiBtn.disabled = true;
+                        multiBtn.title = 'Added to Multi-View';
+                        this.updateMultiViewCount();
+                    } else if (result.reason === 'limit') {
+
                     alert(`Multi-view supports up to ${Config.MULTI_VIEW_MAX} games.`);
                 } else if (result.reason === 'exists') {
-                    multiBtn.textContent = 'In Multi';
+                    multiBtn.textContent = '✓';
                     multiBtn.disabled = true;
                 } else {
                     alert('Unable to add this game to multi-view.');
@@ -1727,6 +1732,25 @@ const UI = {
             });
         } else {
             this.currentStandingsSeason = defaultSeason;
+        }
+
+        const tabs = document.querySelectorAll('.standings-tab');
+        const tabContents = document.querySelectorAll('.standings-tab-content');
+
+        if (tabs.length) {
+            tabs.forEach(tab => {
+                tab.addEventListener('click', () => {
+                    tabs.forEach(t => t.classList.remove('active'));
+                    tabContents.forEach(c => c.classList.remove('active'));
+
+                    tab.classList.add('active');
+                    const targetId = `standings-tab-${tab.dataset.tab}`;
+                    const targetContent = document.getElementById(targetId);
+                    if (targetContent) {
+                        targetContent.classList.add('active');
+                    }
+                });
+            });
         }
 
         if (refreshBtn) {

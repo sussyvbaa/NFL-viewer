@@ -21,9 +21,11 @@
                     <a href="#/" class="nav-link">Games</a>
                     <a href="#/standings" class="nav-link">Standings</a>
                     <a href="#/multi" class="nav-link">Multi-View</a>
-                    <a href="#/add" class="nav-link">Add Game</a>
                 </nav>
-                <button id="settings-btn" class="btn btn-secondary settings-btn" type="button">Settings</button>
+                <div class="header-actions">
+                    <a href="#/add" class="btn btn-secondary add-game-btn" title="Add Custom Game">+</a>
+                    <button id="settings-btn" class="btn btn-secondary settings-btn" type="button">Settings</button>
+                </div>
             </div>
         </header>
 
@@ -46,22 +48,45 @@
                 <button class="btn btn-secondary btn-small settings-close" type="button">Close</button>
             </div>
             <div class="settings-modal__body">
-                <label class="settings-option">
-                    <span>Show posters</span>
-                    <input type="checkbox" id="settings-posters">
-                </label>
-                <label class="settings-option">
-                    <span>Advanced Mode</span>
-                    <input type="checkbox" id="settings-advanced">
-                </label>
-                <label class="settings-option">
-                    <span>Show scores</span>
-                    <input type="checkbox" id="settings-scores">
-                </label>
-                <label class="settings-option">
-                    <span>Auto-cycle streams</span>
-                    <input type="checkbox" id="settings-autocycle">
-                </label>
+                <div class="settings-section">
+                    <h3 class="settings-section-title">Display</h3>
+                    <label class="settings-option">
+                        <div class="settings-option-info">
+                            <span class="settings-option-label">Show posters</span>
+                            <span class="settings-option-desc">Display team/event artwork backgrounds on game cards</span>
+                        </div>
+                        <input type="checkbox" id="settings-posters">
+                    </label>
+                    <label class="settings-option">
+                        <div class="settings-option-info">
+                            <span class="settings-option-label">Show scores</span>
+                            <span class="settings-option-desc">Reveal live score overlays on game cards</span>
+                        </div>
+                        <input type="checkbox" id="settings-scores">
+                    </label>
+                </div>
+
+                <div class="settings-section">
+                    <h3 class="settings-section-title">Playback</h3>
+                    <label class="settings-option">
+                        <div class="settings-option-info">
+                            <span class="settings-option-label">Auto-cycle streams</span>
+                            <span class="settings-option-desc">Automatically try next source if stream fails to load</span>
+                        </div>
+                        <input type="checkbox" id="settings-autocycle">
+                    </label>
+                </div>
+
+                <div class="settings-section">
+                    <h3 class="settings-section-title">System</h3>
+                    <label class="settings-option">
+                        <div class="settings-option-info">
+                            <span class="settings-option-label">Advanced Mode</span>
+                            <span class="settings-option-desc">Enable manual stream source selection controls</span>
+                        </div>
+                        <input type="checkbox" id="settings-advanced">
+                    </label>
+                </div>
             </div>
         </div>
     </div>
@@ -124,8 +149,8 @@
             <div class="game-time"></div>
             <div class="game-actions">
                 <a href="" class="btn btn-primary watch-btn">Watch</a>
-                <button class="btn btn-secondary multi-btn" title="Add to multi-view">Multi</button>
-                <button class="btn btn-secondary delete-btn" title="Remove game">Remove</button>
+                <button class="btn btn-secondary multi-btn" title="Add to multi-view">+</button>
+                <button class="btn btn-secondary delete-btn" title="Remove game">✕</button>
             </div>
         </article>
     </template>
@@ -250,20 +275,28 @@
                     Show ranks
                 </label>
             </div>
-            <div id="standings-status" class="data-status"></div>
-            <section id="playoffs-section" class="playoffs-section hidden">
-                <div class="playoffs-header">
-                    <h2 class="playoffs-title">Playoff Bracket</h2>
-                    <span id="playoffs-subtitle" class="playoffs-subtitle"></span>
-                </div>
-                <div id="playoffs-rounds" class="playoffs-rounds"></div>
-            </section>
-            <div id="playoffs-empty" class="no-games hidden">
-                <p>Playoff bracket will appear when the league enters the postseason.</p>
+            <div class="standings-tabs">
+                <button class="standings-tab active" data-tab="bracket">Bracket</button>
+                <button class="standings-tab" data-tab="table">Standings</button>
             </div>
-            <div id="standings-content" class="standings-content"></div>
-            <div id="standings-empty" class="no-games hidden">
-                <p>No standings data available.</p>
+            <div id="standings-status" class="data-status"></div>
+            <div id="standings-tab-bracket" class="standings-tab-content active">
+                <section id="playoffs-section" class="playoffs-section hidden">
+                    <div class="playoffs-header">
+                        <h2 class="playoffs-title">Playoff Bracket</h2>
+                        <span id="playoffs-subtitle" class="playoffs-subtitle"></span>
+                    </div>
+                    <div id="playoffs-rounds" class="playoffs-rounds"></div>
+                </section>
+                <div id="playoffs-empty" class="no-games hidden">
+                    <p>Playoff bracket will appear when the league enters the postseason.</p>
+                </div>
+            </div>
+            <div id="standings-tab-table" class="standings-tab-content">
+                <div id="standings-content" class="standings-content"></div>
+                <div id="standings-empty" class="no-games hidden">
+                    <p>No standings data available.</p>
+                </div>
             </div>
         </div>
     </template>
