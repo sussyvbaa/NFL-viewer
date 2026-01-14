@@ -43,6 +43,9 @@ const UI = {
     showScores: true,
     // Auto cycle sources
     autoCycleEnabled: true,
+    liveAlertsEnabled: false,
+    liveSoundEnabled: false,
+    notifiedLiveGames: new Set(),
     // Device info
     deviceInfo: {
         isMobile: false,
@@ -183,6 +186,99 @@ const UI = {
         this.advancedMode = settings?.advancedMode === true;
         this.showScores = settings?.scoresEnabled !== false;
         this.autoCycleEnabled = settings?.autoCycleEnabled !== false;
+        this.liveAlertsEnabled = settings?.liveAlertsEnabled === true;
+        this.liveSoundEnabled = settings?.liveSoundEnabled === true;
+        const notified = Array.isArray(settings?.liveNotified) ? settings.liveNotified : [];
+        this.notifiedLiveGames = new Set(notified);
+    },
+
+    async requestNotificationPermission() {
+        if (!('Notification' in window)) return 'unsupported';
+        if (Notification.permission === 'granted') return 'granted';
+        if (Notification.permission === 'denied') return 'denied';
+        try {
+            return await Notification.requestPermission();
+        } catch (error) {
+            console.warn('Notification permission failed:', error);
+            return 'denied';
+        }
+    },
+
+    notifyLiveGames(games) {
+        if (!this.liveAlertsEnabled || !('Notification' in window)) return;
+        if (Notification.permission !== 'granted') return;
+
+        const newlyLive = (games || []).filter(game => {
+            if (!game?.isLive) return false;
+            const leagueKey = game.league || Config.DEFAULT_LEAGUE;
+            const slug = EmbedUtil.sanitizeSlug(game.slug);
+            const key = `${leagueKey}:${slug}`;
+            return !this.notifiedLiveGames.has(key);
+        });
+
+        if (newlyLive.length === 0) return;
+
+        newlyLive.forEach(game => {
+            const away = game.awayTeam?.name || game.teams?.away?.name || 'Away';
+            const home = game.homeTeam?.name || game.teams?.home?.name || 'Home';
+            const title = `${away} vs ${home}`;
+            try {
+                new Notification('Game is Live', {
+                    body: title,
+                    icon: '/icons/icon.svg'
+                });
+            } catch (error) {
+                console.warn('Failed to show notification:', error);
+            }
+
+            if (this.liveSoundEnabled) {
+                this.playAlertSound();
+            }
+
+            const leagueKey = game.league || Config.DEFAULT_LEAGUE;
+            const slug = EmbedUtil.sanitizeSlug(game.slug);
+            const key = `${leagueKey}:${slug}`;
+            this.notifiedLiveGames.add(key);
+        });
+
+        this.saveSettings({ liveNotified: Array.from(this.notifiedLiveGames) });
+    },
+
+    playAlertSound() {
+        try {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(660, audioContext.currentTime);
+            gainNode.gain.setValueAtTime(0.05, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.2);
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.2);
+            oscillator.onended = () => audioContext.close();
+        } catch (error) {
+            console.warn('Alert sound failed:', error);
+        }
+    },
+
+    triggerTestAlert() {
+        try {
+            new Notification('Live Alert Test', {
+                body: 'Notifications are working properly.',
+                icon: '/icons/icon.svg'
+            });
+        } catch (error) {
+            console.warn('Test notification failed:', error);
+        }
+
+        if (this.liveSoundEnabled) {
+            this.playAlertSound();
+        }
     },
 
     detectDevice() {
@@ -247,6 +343,9 @@ const UI = {
         const advancedToggle = document.getElementById('settings-advanced');
         const scoresToggle = document.getElementById('settings-scores');
         const autoCycleToggle = document.getElementById('settings-autocycle');
+        const liveAlertsToggle = document.getElementById('settings-live-alerts');
+        const liveSoundToggle = document.getElementById('settings-live-sound');
+        const testAlertBtn = document.getElementById('settings-test-alert');
 
         if (!modal) return;
 
@@ -263,6 +362,12 @@ const UI = {
             }
             if (autoCycleToggle) {
                 autoCycleToggle.checked = this.autoCycleEnabled;
+            }
+            if (liveAlertsToggle) {
+                liveAlertsToggle.checked = this.liveAlertsEnabled;
+            }
+            if (liveSoundToggle) {
+                liveSoundToggle.checked = this.liveSoundEnabled;
             }
             modal.classList.add('is-open');
             modal.setAttribute('aria-hidden', 'false');
@@ -311,6 +416,31 @@ const UI = {
         autoCycleToggle?.addEventListener('change', () => {
             this.autoCycleEnabled = autoCycleToggle.checked;
             this.saveSettings({ autoCycleEnabled: this.autoCycleEnabled });
+        });
+
+        liveAlertsToggle?.addEventListener('change', async () => {
+            this.liveAlertsEnabled = liveAlertsToggle.checked;
+            if (this.liveAlertsEnabled) {
+                await this.requestNotificationPermission();
+            }
+            this.saveSettings({ liveAlertsEnabled: this.liveAlertsEnabled });
+        });
+
+        liveSoundToggle?.addEventListener('change', () => {
+            this.liveSoundEnabled = liveSoundToggle.checked;
+            this.saveSettings({ liveSoundEnabled: this.liveSoundEnabled });
+        });
+
+        testAlertBtn?.addEventListener('click', async () => {
+            const permission = await this.requestNotificationPermission();
+            if (permission !== 'granted') {
+                const showMessage = window.App?.showToast
+                    ? window.App.showToast
+                    : (message) => window.alert(message);
+                showMessage('Enable notifications in browser settings');
+                return;
+            }
+            this.triggerTestAlert();
         });
 
         document.addEventListener('keydown', (event) => {
@@ -521,6 +651,8 @@ const UI = {
                 .filter(Boolean)
                 .sort((a, b) => this.getGameTimestamp(a) - this.getGameTimestamp(b));
 
+            this.notifyLiveGames(allGames);
+
             // Clear grid
             grid.innerHTML = '';
 
@@ -607,6 +739,48 @@ const UI = {
             .trim();
     },
 
+    getTeamColorTokens(team, fallbackLabel) {
+        const rawColor = team?.color || team?.primaryColor || team?.teamColor || team?.alternateColor || team?.altColor;
+        const base = this.normalizeColor(rawColor) || this.stringToHsl(fallbackLabel || team?.name || 'team');
+        const soft = this.toTransparentColor(base, 0.18);
+        return { base, soft };
+    },
+
+    normalizeColor(value) {
+        if (!value || typeof value !== 'string') return null;
+        const hex = value.trim().replace('#', '');
+        if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+            return `#${hex.split('').map(c => c + c).join('')}`;
+        }
+        if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+            return `#${hex}`;
+        }
+        return null;
+    },
+
+    stringToHsl(value) {
+        const str = (value || '').toString();
+        let hash = 0;
+        for (let i = 0; i < str.length; i += 1) {
+            hash = str.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        const hue = Math.abs(hash) % 360;
+        return `hsl(${hue}, 70%, 55%)`;
+    },
+
+    toTransparentColor(color, alpha) {
+        if (!color) return `rgba(255,255,255,${alpha})`;
+        if (color.startsWith('hsl')) {
+            return color.replace('hsl', 'hsla').replace(')', `, ${alpha})`);
+        }
+        if (!color.startsWith('#')) return `rgba(255,255,255,${alpha})`;
+        const hex = color.replace('#', '');
+        const r = parseInt(hex.substring(0, 2), 16);
+        const g = parseInt(hex.substring(2, 4), 16);
+        const b = parseInt(hex.substring(4, 6), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    },
+
     getDedupeKey(game) {
         const dateKey = this.getGameDateKey(game);
         const awayName = this.normalizeDedupeName(game?.awayTeam?.name || game?.teams?.away?.name || '');
@@ -690,8 +864,17 @@ const UI = {
         const homeTeam = card.querySelector('.home-team');
         const awayLabel = game.awayTeam?.shortName || game.awayTeam?.abbreviation || game.awayTeam?.name;
         const homeLabel = game.homeTeam?.shortName || game.homeTeam?.abbreviation || game.homeTeam?.name;
-        awayTeam.textContent = awayLabel || this.extractTeamAbbrev(game.title, 'away');
-        homeTeam.textContent = homeLabel || this.extractTeamAbbrev(game.title, 'home');
+        const awayDisplay = awayLabel || this.extractTeamAbbrev(game.title, 'away');
+        const homeDisplay = homeLabel || this.extractTeamAbbrev(game.title, 'home');
+        awayTeam.textContent = awayDisplay;
+        homeTeam.textContent = homeDisplay;
+
+        const awayColors = this.getTeamColorTokens(game.awayTeam, awayDisplay);
+        const homeColors = this.getTeamColorTokens(game.homeTeam, homeDisplay);
+        card.style.setProperty('--away-color', awayColors.base);
+        card.style.setProperty('--away-color-soft', awayColors.soft);
+        card.style.setProperty('--home-color', homeColors.base);
+        card.style.setProperty('--home-color-soft', homeColors.soft);
 
         const awayLogo = card.querySelector('.away-logo');
         const homeLogo = card.querySelector('.home-logo');
@@ -703,17 +886,18 @@ const UI = {
         if (this.showScores) {
             const awayValue = game.awayTeam?.score ?? game.awayScore;
             const homeValue = game.homeTeam?.score ?? game.homeScore;
-            if (awayScore && awayValue !== undefined && awayValue !== null && awayValue !== '') {
-                awayScore.textContent = awayValue;
+            const hasAwayScore = awayValue !== undefined && awayValue !== null && awayValue !== '';
+            const hasHomeScore = homeValue !== undefined && homeValue !== null && homeValue !== '';
+
+            if (awayScore) {
+                awayScore.textContent = hasAwayScore ? awayValue : '—';
+                awayScore.classList.toggle('is-empty', !hasAwayScore);
                 awayScore.classList.remove('hidden');
-            } else {
-                awayScore?.classList.add('hidden');
             }
-            if (homeScore && homeValue !== undefined && homeValue !== null && homeValue !== '') {
-                homeScore.textContent = homeValue;
+            if (homeScore) {
+                homeScore.textContent = hasHomeScore ? homeValue : '—';
+                homeScore.classList.toggle('is-empty', !hasHomeScore);
                 homeScore.classList.remove('hidden');
-            } else {
-                homeScore?.classList.add('hidden');
             }
         } else {
             awayScore?.classList.add('hidden');

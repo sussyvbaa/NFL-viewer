@@ -533,7 +533,13 @@ def parse_espn_teams(payload):
                     'abbreviation': abbreviation.upper(),
                     'name': display_name,
                     'shortName': short_name,
-                    'logo': select_logo(team.get('logos') or [])
+                    'logo': select_logo(team.get('logos') or []),
+                    'color': team.get('color'),
+                    'alternateColor': team.get('alternateColor'),
+                    'alternateColor2': team.get('alternateColor2'),
+                    'alternateColor3': team.get('alternateColor3'),
+                    'primaryColor': team.get('primaryColor'),
+                    'secondaryColor': team.get('secondaryColor')
                 })
     return teams
 

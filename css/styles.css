@@ -652,6 +652,17 @@ h1, h2, h3, h4, h5, h6 {
     margin-bottom: 0;
 }
 
+.settings-action {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 0.5rem;
+}
+
+.settings-action .btn {
+    width: 100%;
+    justify-content: center;
+}
+
 .settings-option-info {
     display: flex;
     flex-direction: column;
@@ -1104,8 +1115,10 @@ body.is-ios .embed-container iframe {
    Game Card - Premium Design
    ============================================ */
 .game-card {
-    background: linear-gradient(165deg, rgba(255,255,255,0.03) 0%, transparent 40%),
-                var(--bg-secondary);
+    background: 
+        linear-gradient(135deg, var(--away-color-soft, rgba(255,255,255,0.04)) 0%, transparent 45%),
+        linear-gradient(315deg, var(--home-color-soft, rgba(255,255,255,0.04)) 0%, transparent 45%),
+        var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
     padding: 1.25rem;
@@ -1113,23 +1126,43 @@ body.is-ios .embed-container iframe {
     flex-direction: column;
     position: relative;
     overflow: hidden;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: transform var(--transition), box-shadow var(--transition), border-color var(--transition);
     height: 100%;
     box-shadow: 
-        0 2px 8px rgba(0,0,0,0.3),
-        0 8px 24px rgba(0,0,0,0.2),
+        0 2px 10px rgba(0,0,0,0.35),
+        0 10px 28px rgba(0,0,0,0.25),
         inset 0 1px 0 rgba(255,255,255,0.04);
 }
 
+.game-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--away-color, #ffffff), var(--home-color, #ffffff));
+    opacity: 0;
+    transform: translateY(-2px);
+    transition: opacity var(--transition), transform var(--transition);
+}
+
 .game-card:hover {
-    transform: translateY(-3px) scale(1.01);
+    transform: translateY(-3px);
     border-color: rgba(255,255,255,0.15);
     box-shadow: 
         0 4px 12px rgba(0,0,0,0.4),
         0 16px 48px rgba(0,0,0,0.3),
         inset 0 1px 0 rgba(255,255,255,0.06);
-    background: linear-gradient(165deg, rgba(255,255,255,0.05) 0%, transparent 40%),
-                var(--bg-elevated);
+    background: 
+        linear-gradient(135deg, var(--away-color-soft, rgba(255,255,255,0.06)) 0%, transparent 45%),
+        linear-gradient(315deg, var(--home-color-soft, rgba(255,255,255,0.06)) 0%, transparent 45%),
+        var(--bg-elevated);
+}
+
+.game-card.is-live::before {
+    opacity: 0.9;
+    transform: translateY(0);
 }
 
 .game-poster {
@@ -1150,7 +1183,7 @@ body.is-ios .embed-container iframe {
     opacity: 0.2;
 }
 
-.game-card > *:not(.game-poster):not(.game-status):not(.card-glow) {
+.game-card > *:not(.game-poster):not(.game-status) {
     position: relative;
     z-index: 1;
 }
@@ -1190,7 +1223,6 @@ body.is-ios .embed-container iframe {
     background: linear-gradient(135deg, rgba(239,68,68,0.2) 0%, rgba(239,68,68,0.1) 100%);
     color: #f87171;
     box-shadow: 0 0 20px rgba(239,68,68,0.15);
-    animation: status-glow-red 2s ease-in-out infinite;
 }
 
 .game-status.live::before {
@@ -1206,11 +1238,6 @@ body.is-ios .embed-container iframe {
 @keyframes pulse-live {
     0%, 100% { opacity: 1; box-shadow: 0 0 6px #ef4444; }
     50% { opacity: 0.6; box-shadow: 0 0 12px #ef4444; }
-}
-
-@keyframes status-glow-red {
-    0%, 100% { box-shadow: 0 0 20px rgba(239,68,68,0.15); }
-    50% { box-shadow: 0 0 28px rgba(239,68,68,0.25); }
 }
 
 .game-status.available {
@@ -1241,65 +1268,95 @@ body.is-ios .embed-container iframe {
 
 .game-teams {
     display: flex;
-    align-items: center;
-    gap: 0.5rem;
+    flex-direction: column;
+    gap: 0.7rem;
     margin-top: 1.5rem;
-    margin-bottom: 0.75rem;
+    margin-bottom: 0.85rem;
 }
 
 .team-block {
-    display: inline-flex;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.6rem;
+    min-width: 0;
+    padding: 0.35rem 0.5rem;
+    border-radius: var(--radius-md);
+}
+
+.team-block:first-of-type {
+    border-left: 2px solid var(--away-color, rgba(255,255,255,0.4));
+    background: linear-gradient(90deg, var(--away-color-soft, rgba(255,255,255,0.06)) 0%, transparent 70%);
+}
+
+.team-block:last-of-type {
+    border-left: 2px solid var(--home-color, rgba(255,255,255,0.4));
+    background: linear-gradient(90deg, var(--home-color-soft, rgba(255,255,255,0.06)) 0%, transparent 70%);
 }
 
 .team-logo {
-    width: 36px;
-    height: 36px;
+    width: 34px;
+    height: 34px;
     object-fit: contain;
     border-radius: var(--radius-sm);
     background-color: transparent;
     border: none;
     padding: 0;
-    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+    filter: drop-shadow(0 2px 6px rgba(0,0,0,0.35));
     transition: transform 0.2s ease;
 }
 
 .game-card:hover .team-logo {
-    transform: scale(1.05);
+    transform: scale(1.04);
 }
 
 .team-score {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 24px;
-    padding: 0.2rem 0.5rem;
-    margin-left: 0.25rem;
-    border-radius: var(--radius-sm);
-    background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 100%);
-    border: 1px solid rgba(255,255,255,0.08);
+    min-width: 32px;
+    padding: 0.25rem 0.6rem;
+    border-radius: var(--radius-md);
+    background: linear-gradient(135deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.06) 100%);
+    border: 1px solid rgba(255,255,255,0.12);
     color: var(--text-primary);
-    font-size: 0.8rem;
+    font-size: 0.85rem;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.02em;
 }
 
-.team {
-    font-size: 1rem;
-    font-weight: 700;
-    color: var(--text-primary);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
+.team-score.is-empty {
+    color: var(--text-muted);
+    border-color: rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.04);
 }
 
-.vs {
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    font-weight: 500;
-    margin: 0 0.15rem;
-    opacity: 0.6;
+.team-block:first-of-type .team-score {
+    border-color: var(--away-color, rgba(255,255,255,0.2));
+    color: var(--away-color, var(--text-primary));
+    background: linear-gradient(135deg, var(--away-color-soft, rgba(255,255,255,0.1)) 0%, rgba(255,255,255,0.04) 100%);
+}
+
+.team-block:last-of-type .team-score {
+    border-color: var(--home-color, rgba(255,255,255,0.2));
+    color: var(--home-color, var(--text-primary));
+    background: linear-gradient(135deg, var(--home-color-soft, rgba(255,255,255,0.1)) 0%, rgba(255,255,255,0.04) 100%);
+}
+
+.team {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    line-height: 1.2;
+    min-width: 0;
+    white-space: normal;
+}
+
+.game-card .vs {
+    display: none;
 }
 
 .game-title {
@@ -1420,32 +1477,19 @@ body.is-ios .embed-container iframe {
 }
 
 .game-card.is-live {
-    border-color: rgba(34,197,94,0.25);
+    border-color: rgba(255,255,255,0.16);
     box-shadow: 
-        0 2px 8px rgba(0,0,0,0.3),
-        0 8px 24px rgba(0,0,0,0.2),
-        0 0 40px rgba(34,197,94,0.08),
-        inset 0 1px 0 rgba(34,197,94,0.1);
-}
-
-.game-card.is-live::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: linear-gradient(90deg, transparent, rgba(34,197,94,0.6), transparent);
-    z-index: 10;
+        0 2px 10px rgba(0,0,0,0.35),
+        0 12px 36px rgba(0,0,0,0.3),
+        0 0 50px var(--away-color-soft, rgba(34,197,94,0.12));
 }
 
 .game-card.is-live:hover {
-    border-color: rgba(34,197,94,0.35);
+    border-color: rgba(255,255,255,0.2);
     box-shadow: 
         0 4px 12px rgba(0,0,0,0.4),
-        0 16px 48px rgba(0,0,0,0.3),
-        0 0 60px rgba(34,197,94,0.12),
-        inset 0 1px 0 rgba(34,197,94,0.15);
+        0 18px 52px rgba(0,0,0,0.35),
+        0 0 70px var(--home-color-soft, rgba(34,197,94,0.16));
 }
 
 .game-card.is-ended {

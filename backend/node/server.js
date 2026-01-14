@@ -137,6 +137,15 @@ function createServer() {
 
     app.use('/css', express.static(path.join(ROOT_DIR, 'css')));
     app.use('/js', express.static(path.join(ROOT_DIR, 'js')));
+    app.use('/icons', express.static(path.join(ROOT_DIR, 'icons')));
+
+    app.get('/manifest.json', (req, res) => {
+        res.sendFile(path.join(ROOT_DIR, 'manifest.json'));
+    });
+
+    app.get('/sw.js', (req, res) => {
+        res.sendFile(path.join(ROOT_DIR, 'sw.js'));
+    });
 
     app.get('/', (req, res) => {
         res.sendFile(path.join(ROOT_DIR, 'index.html'));

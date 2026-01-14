@@ -1231,6 +1231,18 @@ const TeamsUtil = {
         mlb: {},
         nhl: {}
     },
+    colorMap: {
+        nfl: {},
+        nba: {},
+        mlb: {},
+        nhl: {}
+    },
+    colorNameMap: {
+        nfl: {},
+        nba: {},
+        mlb: {},
+        nhl: {}
+    },
     logosLoaded: {
         nfl: false,
         nba: false,
@@ -1368,11 +1380,13 @@ const TeamsUtil = {
             return { ...rawTeam };
         }
 
-        return {
+        const merged = {
             ...resolved,
             ...rawTeam,
             abbreviation: rawTeam.abbreviation || resolved.abbreviation
         };
+
+        return this.applyTeamColors(merged, league);
     },
     /**
      * Get all teams as an array, sorted alphabetically by name
@@ -1563,6 +1577,35 @@ const TeamsUtil = {
         return Array.from(names);
     },
 
+    getColorByAbbreviation(abbr, league) {
+        if (!abbr) return null;
+        const key = abbr.toUpperCase();
+        return this.colorMap[league]?.[key] || null;
+    },
+
+    getColorByName(name, league) {
+        if (!name) return null;
+        const key = this.normalizeTeamString(name);
+        return this.colorNameMap[league]?.[key] || null;
+    },
+
+    applyTeamColors(team, league) {
+        if (!team) return team;
+        const existing = team.color || team.primaryColor || team.teamColor;
+        if (existing) return team;
+
+        const fromAbbr = this.getColorByAbbreviation(team.abbreviation, league);
+        const fromName = this.getColorByName(team.name, league);
+        const colors = fromAbbr || fromName;
+        if (!colors) return team;
+
+        return {
+            ...team,
+            color: colors.primary || colors.color || colors.base || null,
+            alternateColor: colors.secondary || colors.alternate || colors.alt || null
+        };
+    },
+
     /**
      * Load ESPN team logos via the backend
      * @returns {Promise<void>}
@@ -1588,7 +1631,9 @@ const TeamsUtil = {
 
         this.logosPromise[league] = (async () => {
             try {
-                const response = await fetch(`${Config.API_BASE_URL}/teams?league=${league}`, {
+                const shouldForce = Object.keys(this.colorMap[league] || {}).length === 0;
+                const url = `${Config.API_BASE_URL}/teams?league=${league}${shouldForce ? '&force=1' : ''}`;
+                const response = await fetch(url, {
                     headers: {
                         'Accept': 'application/json'
                     }
@@ -1601,11 +1646,8 @@ const TeamsUtil = {
                 const data = await response.json();
                 if (Array.isArray(data.teams)) {
                     data.teams.forEach(team => {
-                        if (!team.logo) {
-                            return;
-                        }
                         const abbr = team.abbreviation ? team.abbreviation.toUpperCase() : null;
-                        if (abbr) {
+                        if (team.logo && abbr) {
                             this.logoMap[league][abbr] = team.logo;
                         }
                         const nameKeys = [
@@ -1615,8 +1657,26 @@ const TeamsUtil = {
                         ];
                         nameKeys.forEach(value => {
                             const key = this.normalizeTeamString(value);
-                            if (key) {
+                            if (key && team.logo) {
                                 this.logoNameMap[league][key] = team.logo;
+                            }
+                        });
+
+                        if (abbr) {
+                            this.colorMap[league][abbr] = {
+                                primary: team.color || team.primaryColor || null,
+                                secondary: team.alternateColor || team.secondaryColor || null,
+                                alt: team.alternateColor2 || team.alternateColor3 || null
+                            };
+                        }
+                        nameKeys.forEach(value => {
+                            const key = this.normalizeTeamString(value);
+                            if (key) {
+                                this.colorNameMap[league][key] = {
+                                    primary: team.color || team.primaryColor || null,
+                                    secondary: team.alternateColor || team.secondaryColor || null,
+                                    alt: team.alternateColor2 || team.alternateColor3 || null
+                                };
                             }
                         });
                     });
