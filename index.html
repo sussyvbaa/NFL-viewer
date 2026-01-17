@@ -298,6 +298,23 @@
                     <p>Loading stream...</p>
                 </div>
             </div>
+            <div class="watch-panel">
+                <div class="watch-tabs">
+                    <button class="watch-tab is-active" type="button" data-tab="stream">Stream</button>
+                    <button class="watch-tab" type="button" data-tab="stats">Stats</button>
+                </div>
+                <div class="watch-tab-panel is-active" data-panel="stream">
+                    <div id="watch-info" class="watch-info"></div>
+                </div>
+                <div class="watch-tab-panel" data-panel="stats">
+                    <div id="stats-loading" class="stats-loading">
+                        <div class="loader"></div>
+                        <span>Loading stats...</span>
+                    </div>
+                    <div id="stats-error" class="stats-error hidden"></div>
+                    <div id="stats-content" class="stats-content hidden"></div>
+                </div>
+            </div>
         </div>
     </template>
 

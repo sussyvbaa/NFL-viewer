@@ -156,6 +156,11 @@ const API = {
         ttl: 60000,
         forceNext: false
     },
+    scoreboardCache: {
+        byLeague: {},
+        ttl: 20000,
+        forceNext: false
+    },
 
     /**
      * Fetch games from the backend
@@ -199,6 +204,8 @@ const API = {
             const games = Array.isArray(data.games) ? data.games : [];
             const meta = data.meta || null;
 
+            await this.attachScores(games, league, force);
+
             this.cache.byFilter[cacheKey] = {
                 games,
                 lastFetch: now,
@@ -211,6 +218,154 @@ const API = {
             console.error('Failed to fetch games:', error);
             return [];
         }
+    },
+
+    normalizeTeamName(value) {
+        if (!value) return '';
+        const normalized = value
+            .toString()
+            .toLowerCase()
+            .replace(/&/g, 'and')
+            .replace(/st\./g, 'st')
+            .replace(/saint/g, 'st')
+            .replace(/[^a-z0-9 ]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return normalized;
+    },
+
+    extractScore(competitor) {
+        if (!competitor) return null;
+        const score = competitor?.score?.displayValue ?? competitor?.score?.value ?? competitor?.score ?? null;
+        return score === '' ? null : score;
+    },
+
+    buildScoreboardIndex(scoreboard) {
+        const index = { byAbbr: new Map(), byName: new Map() };
+        const events = Array.isArray(scoreboard?.events) ? scoreboard.events : [];
+        events.forEach(event => {
+            const competitors = event?.competitions?.[0]?.competitors || [];
+            if (competitors.length < 2) return;
+            const abbrs = competitors
+                .map(entry => entry?.team?.abbreviation)
+                .filter(Boolean)
+                .map(value => value.toUpperCase());
+            if (abbrs.length === 2) {
+                const key = [...abbrs].sort().join('|');
+                if (!index.byAbbr.has(key)) {
+                    index.byAbbr.set(key, event);
+                }
+            }
+            const names = competitors
+                .map(entry => entry?.team?.displayName || entry?.team?.shortDisplayName || entry?.team?.name)
+                .map(value => this.normalizeTeamName(value))
+                .filter(Boolean);
+            if (names.length === 2) {
+                const key = [...names].sort().join('|');
+                if (!index.byName.has(key)) {
+                    index.byName.set(key, event);
+                }
+            }
+        });
+        return index;
+    },
+
+    async getScoreboard(league, forceRefresh) {
+        const cache = this.scoreboardCache;
+        const now = Date.now();
+        const entry = cache.byLeague[league];
+        const force = Boolean(forceRefresh || cache.forceNext);
+        if (!force && entry && (now - entry.lastFetch) < cache.ttl) {
+            return entry.scoreboard;
+        }
+        const baseUrl = ESPN_SCOREBOARD_ENDPOINTS[league];
+        if (!baseUrl) {
+            return null;
+        }
+        try {
+            const response = await fetch(baseUrl, { headers: { 'Accept': 'application/json' } });
+            if (!response.ok) {
+                throw new Error(`ESPN scoreboard responded with ${response.status}`);
+            }
+            const data = await response.json();
+            cache.byLeague[league] = { scoreboard: data, lastFetch: now };
+            cache.forceNext = false;
+            return data;
+        } catch (error) {
+            console.warn('Scoreboard fetch failed:', error);
+            return null;
+        }
+    },
+
+    applyScoresToGame(game, event, league) {
+        if (!game || !event) return;
+        const competitors = event?.competitions?.[0]?.competitors || [];
+        const awayComp = competitors.find(entry => entry?.homeAway === 'away') || competitors[0];
+        const homeComp = competitors.find(entry => entry?.homeAway === 'home') || competitors[1];
+        const awayScore = this.extractScore(awayComp);
+        const homeScore = this.extractScore(homeComp);
+
+        if (awayScore !== null) {
+            game.awayTeam = { ...(game.awayTeam || game.teams?.away || {}), score: awayScore };
+            if (game.teams?.away) {
+                game.teams.away = { ...game.teams.away, score: awayScore };
+            }
+        }
+        if (homeScore !== null) {
+            game.homeTeam = { ...(game.homeTeam || game.teams?.home || {}), score: homeScore };
+            if (game.teams?.home) {
+                game.teams.home = { ...game.teams.home, score: homeScore };
+            }
+        }
+
+        if (awayComp?.team?.abbreviation || homeComp?.team?.abbreviation) {
+            if (game.awayTeam) {
+                game.awayTeam.abbreviation = game.awayTeam.abbreviation || awayComp?.team?.abbreviation;
+            }
+            if (game.homeTeam) {
+                game.homeTeam.abbreviation = game.homeTeam.abbreviation || homeComp?.team?.abbreviation;
+            }
+        }
+    },
+
+    async attachScores(games, league, forceRefresh) {
+        if (!Array.isArray(games) || !games.length) return;
+        const leagues = league === 'all'
+            ? Array.from(new Set(games.map(game => game.league || Config.DEFAULT_LEAGUE)))
+            : [league];
+
+        await Promise.all(leagues.map(async leagueKey => {
+            const scoreboard = await this.getScoreboard(leagueKey, forceRefresh);
+            if (!scoreboard) return;
+            const index = this.buildScoreboardIndex(scoreboard);
+
+            games.forEach(game => {
+                const gameLeague = game.league || Config.DEFAULT_LEAGUE;
+                if (leagueKey !== gameLeague) return;
+                const awayRaw = game.awayTeam || game.teams?.away || {};
+                const homeRaw = game.homeTeam || game.teams?.home || {};
+                const awayResolved = TeamsUtil.resolveTeam(awayRaw, gameLeague) || awayRaw;
+                const homeResolved = TeamsUtil.resolveTeam(homeRaw, gameLeague) || homeRaw;
+                const awayAbbr = awayResolved?.abbreviation;
+                const homeAbbr = homeResolved?.abbreviation;
+                let event = null;
+                if (awayAbbr && homeAbbr) {
+                    const key = [awayAbbr.toUpperCase(), homeAbbr.toUpperCase()].sort().join('|');
+                    event = index.byAbbr.get(key) || null;
+                }
+                if (!event) {
+                    const awayName = this.normalizeTeamName(awayResolved?.name || awayResolved?.displayName || awayRaw?.name);
+                    const homeName = this.normalizeTeamName(homeResolved?.name || homeResolved?.displayName || homeRaw?.name);
+                    if (awayName && homeName) {
+                        const key = [awayName, homeName].sort().join('|');
+                        event = index.byName.get(key) || null;
+                    }
+                }
+                if (event) {
+                    this.applyScoresToGame(game, event, gameLeague);
+                }
+            });
+        }));
     },
 
     /**
@@ -240,6 +395,40 @@ const API = {
             return data.game || null;
         } catch (error) {
             console.error('Failed to fetch game by slug:', error);
+            return null;
+        }
+    },
+
+    async getGameStats(game, options = {}) {
+        if (!game) return null;
+        const league = options.league || game.league || Config.DEFAULT_LEAGUE;
+        const awayTeam = options.awayTeam || game.awayTeam || game.teams?.away || {};
+        const homeTeam = options.homeTeam || game.homeTeam || game.teams?.home || {};
+        const url = new URL(`${this.BASE_URL}/stats`, window.location.origin);
+        url.searchParams.set('league', league);
+        if (awayTeam?.name) url.searchParams.set('away', awayTeam.name);
+        if (homeTeam?.name) url.searchParams.set('home', homeTeam.name);
+        if (awayTeam?.abbreviation) url.searchParams.set('abbrAway', awayTeam.abbreviation);
+        if (homeTeam?.abbreviation) url.searchParams.set('abbrHome', homeTeam.abbreviation);
+        if (options.forceRefresh) url.searchParams.set('force', '1');
+        if (game.gameTime) {
+            const date = new Date(game.gameTime);
+            const yyyy = date.getFullYear();
+            const mm = String(date.getMonth() + 1).padStart(2, '0');
+            const dd = String(date.getDate()).padStart(2, '0');
+            url.searchParams.set('date', `${yyyy}${mm}${dd}`);
+        }
+
+        try {
+            const response = await fetch(url.toString(), {
+                headers: { 'Accept': 'application/json' }
+            });
+            if (!response.ok) {
+                return null;
+            }
+            return await response.json();
+        } catch (error) {
+            console.error('Failed to fetch game stats:', error);
             return null;
         }
     },

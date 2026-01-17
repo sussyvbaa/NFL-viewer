@@ -64,6 +64,15 @@ const UI = {
         lastSlug: null,
         autoCycleActive: false
     },
+    statsState: {
+        status: 'idle',
+        lastKey: null,
+        data: null,
+        game: null,
+        autoRefresh: false,
+        refreshTimer: null,
+        lastUpdated: null
+    },
 
 
     /**
@@ -117,6 +126,13 @@ const UI = {
      * Clear main content area
      */
     clearContent() {
+        if (!this.mainContent) {
+            this.mainContent = document.getElementById('main-content');
+        }
+        if (!this.mainContent) {
+            return;
+        }
+        this.clearStatsAutoRefresh();
         this.mainContent.innerHTML = '';
         document.body.classList.remove('multiview-layout');
     },
@@ -1152,6 +1168,9 @@ const UI = {
 
         // Set up fullscreen button
         this.setupFullscreenButton();
+        this.setupWatchTabs();
+        this.renderWatchInfo(enrichedGame);
+        this.loadStats(enrichedGame);
     },
 
     /**
@@ -1198,6 +1217,9 @@ const UI = {
 
         // Set up fullscreen button
         this.setupFullscreenButton();
+        this.setupWatchTabs();
+        this.renderWatchInfo(null);
+        this.renderStatsError('Stats unavailable for this stream.');
     },
 
     /**
@@ -1484,6 +1506,951 @@ const UI = {
         document.addEventListener('fullscreenchange', () => {
             btn.textContent = document.fullscreenElement ? 'Exit Fullscreen' : 'Fullscreen';
         });
+    },
+
+    setupWatchTabs() {
+        const tabs = Array.from(document.querySelectorAll('.watch-tab'));
+        const panels = Array.from(document.querySelectorAll('.watch-tab-panel'));
+        if (!tabs.length || !panels.length) return;
+
+        const activate = (tabKey) => {
+            tabs.forEach(tab => tab.classList.toggle('is-active', tab.dataset.tab === tabKey));
+            panels.forEach(panel => panel.classList.toggle('is-active', panel.dataset.panel === tabKey));
+        };
+
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                const key = tab.dataset.tab;
+                if (key) activate(key);
+            });
+        });
+
+        const defaultTab = tabs.find(tab => tab.classList.contains('is-active')) || tabs[0];
+        if (defaultTab?.dataset.tab) {
+            activate(defaultTab.dataset.tab);
+        }
+    },
+
+    renderWatchInfo(game) {
+        const info = document.getElementById('watch-info');
+        if (!info) return;
+        info.innerHTML = '';
+
+        const items = [];
+        if (game) {
+            const leagueName = Config.getLeagueConfig(game.league || Config.DEFAULT_LEAGUE)?.name || (game.league || '').toUpperCase();
+            const status = game.isLive ? 'Live' : (game.isEnded ? 'Final' : 'Upcoming');
+            items.push({ label: 'League', value: leagueName });
+            items.push({ label: 'Status', value: status });
+            if (game.formattedTime) {
+                items.push({ label: 'Start', value: game.formattedTime });
+            }
+            items.push({ label: 'Source', value: this.embedState.currentSource || 'admin' });
+        } else {
+            items.push({ label: 'Status', value: 'Stream info unavailable' });
+        }
+
+        const fragment = document.createDocumentFragment();
+        items.forEach(item => {
+            const row = document.createElement('div');
+            row.className = 'watch-info-row';
+            const label = document.createElement('span');
+            label.className = 'watch-info-label';
+            label.textContent = item.label;
+            const value = document.createElement('span');
+            value.className = 'watch-info-value';
+            value.textContent = item.value;
+            row.appendChild(label);
+            row.appendChild(value);
+            fragment.appendChild(row);
+        });
+        info.appendChild(fragment);
+    },
+
+    async loadStats(game) {
+        const content = document.getElementById('stats-content');
+        if (!content) return;
+        if (!game) {
+            this.renderStatsError('Stats unavailable for this stream.');
+            return;
+        }
+
+        const key = `${game.league || 'all'}:${game.slug || ''}`;
+        this.statsState.status = 'loading';
+        this.statsState.lastKey = key;
+        this.statsState.data = null;
+        this.statsState.game = game;
+        this.renderStatsLoading();
+
+        const stats = await API.getGameStats(game);
+        if (this.statsState.lastKey !== key) return;
+        if (!stats) {
+            this.renderStatsError('No stats available for this game yet.');
+            return;
+        }
+        this.statsState.status = 'ready';
+        this.statsState.data = stats;
+        this.statsState.lastUpdated = new Date();
+        this.renderStatsContent(stats);
+        if (this.statsState.autoRefresh) {
+            this.setStatsAutoRefresh(true);
+        }
+    },
+
+    renderStatsLoading() {
+        const loading = document.getElementById('stats-loading');
+        const error = document.getElementById('stats-error');
+        const content = document.getElementById('stats-content');
+        loading?.classList.remove('hidden');
+        error?.classList.add('hidden');
+        content?.classList.add('hidden');
+    },
+
+    renderStatsError(message) {
+        const loading = document.getElementById('stats-loading');
+        const error = document.getElementById('stats-error');
+        const content = document.getElementById('stats-content');
+        if (error) {
+            error.textContent = message;
+            error.classList.remove('hidden');
+        }
+        loading?.classList.add('hidden');
+        content?.classList.add('hidden');
+    },
+
+    normalizeStatKey(stat) {
+        const raw = [stat?.name, stat?.abbreviation, stat?.displayName].find(Boolean);
+        if (!raw) return '';
+        return raw.toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+    },
+
+    formatTeamStatLabel(stat) {
+        const key = this.normalizeStatKey(stat);
+        const labels = {
+            fieldgoalsmadefieldgoalsattempted: 'Field Goals (M-A)',
+            threepointfieldgoalsmadethreepointfieldgoalsattempted: '3PT (M-A)',
+            freethrowsmadefreethrowsattempted: 'Free Throws (M-A)',
+            fieldgoalpct: 'FG%',
+            threepointfieldgoalpct: '3PT%',
+            freethrowpct: 'FT%',
+            totalrebounds: 'Rebounds',
+            offensiverebounds: 'Off Reb',
+            defensiverebounds: 'Def Reb',
+            assists: 'Assists',
+            steals: 'Steals',
+            blocks: 'Blocks',
+            turnovers: 'Turnovers',
+            teamturnovers: 'Team Turnovers',
+            totalturnovers: 'Total Turnovers',
+            technicalfouls: 'Technical Fouls',
+            totaltechnicalfouls: 'Total Technical Fouls',
+            flagrantfouls: 'Flagrant Fouls',
+            turnoverpoints: 'Points Off Turnovers',
+            fastbreakpoints: 'Fast Break Points',
+            pointsinpaint: 'Points In Paint',
+            fouls: 'Fouls',
+            largestlead: 'Largest Lead',
+            leadchanges: 'Lead Changes',
+            leadpercentage: 'Lead %',
+            totalyards: 'Total Yards',
+            passingyards: 'Pass Yards',
+            netpassingyards: 'Pass Yards',
+            rushingyards: 'Rush Yards',
+            firstdowns: '1st Downs',
+            thirdownefficiency: '3rd Down',
+            thirddowneff: '3rd Down',
+            fourthdownefficiency: '4th Down',
+            timeofpossession: 'Time of Possession',
+            redzoneattempts: 'Red Zone Att',
+            redzonepercentage: 'Red Zone %',
+            runs: 'Runs',
+            hits: 'Hits',
+            errors: 'Errors',
+            homeruns: 'Home Runs',
+            runsbattedin: 'RBI',
+            battingaverage: 'AVG',
+            onbasepercentage: 'OBP',
+            sluggingpercentage: 'SLG',
+            onbaseplusslugging: 'OPS',
+            earnedrunaverage: 'ERA',
+            strikeouts: 'Strikeouts',
+            walks: 'Walks',
+            hitsallowed: 'Hits Allowed',
+            runsearned: 'Earned Runs',
+            shotsongoal: 'Shots on Goal',
+            powerplaygoals: 'Power Play Goals',
+            powerplayopportunities: 'PP Opportunities',
+            powerplaypercentage: 'PP%',
+            faceoffwinpercentage: 'Faceoff %',
+            faceoffwins: 'Faceoff Wins',
+            penaltyminutes: 'Penalty Minutes',
+            blockedshots: 'Blocks',
+            giveaways: 'Giveaways',
+            takeaways: 'Takeaways'
+        };
+        if (labels[key]) return labels[key];
+
+        const display = stat?.displayName || stat?.abbreviation || stat?.name || '';
+        let label = display.toString();
+        label = label.replace(/([a-z])([A-Z])/g, '$1 $2');
+        label = label.replace(/-/g, ' ');
+        label = label.replace(/\bPct\b/gi, '%');
+        label = label.replace(/\bPercentage\b/gi, '%');
+        label = label.replace(/\s+/g, ' ').trim();
+        return label.replace(/\b\w/g, char => char.toUpperCase());
+    },
+
+    formatTeamStatValue(stat) {
+        const raw = stat?.displayValue ?? stat?.value;
+        if (raw === undefined || raw === null || raw === '') return '—';
+        let value = raw.toString();
+        const key = this.normalizeStatKey(stat);
+        const needsPercent = key.endsWith('pct') || key.includes('percentage');
+        if (needsPercent && !value.includes('%')) {
+            value = `${value}%`;
+        }
+        return value;
+    },
+
+    shouldIncludeTeamStat(stat) {
+        const key = this.normalizeStatKey(stat);
+        if (!key) return false;
+        const blocked = ['avg', 'average', 'streak', 'lastten', 'record', 'home', 'road', 'conference', 'division'];
+        return !blocked.some(token => key.includes(token));
+    },
+
+    parseStatValue(value) {
+        if (value === undefined || value === null) return null;
+        const text = value.toString().trim();
+        if (!text || text === '—') return null;
+        if (text.includes(':')) {
+            const parts = text.split(':').map(Number);
+            if (parts.length === 2 && parts.every(num => !Number.isNaN(num))) {
+                return (parts[0] * 60) + parts[1];
+            }
+        }
+        const match = text.match(/-?\d+(?:\.\d+)?/);
+        if (!match) return null;
+        return Number.parseFloat(match[0]);
+    },
+
+    makeStatsTableSortable(table) {
+        if (!table) return;
+        const header = table.querySelector('.stats-row-header');
+        if (!header) return;
+        const headerCells = Array.from(header.children).slice(1);
+        headerCells.forEach((cell, index) => {
+            cell.classList.add('stats-sortable');
+            cell.setAttribute('role', 'button');
+            cell.setAttribute('tabindex', '0');
+            cell.setAttribute('aria-sort', 'none');
+            cell.dataset.sortIndex = String(index);
+            const handler = () => this.sortStatsTable(table, index, cell);
+            cell.addEventListener('click', handler);
+            cell.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    handler();
+                }
+            });
+        });
+    },
+
+    sortStatsTable(table, columnIndex, activeCell) {
+        const rows = Array.from(table.querySelectorAll('.stats-row'))
+            .filter(row => !row.classList.contains('stats-row-header'));
+        if (!rows.length) return;
+
+        const currentIndex = table.dataset.sortIndex;
+        const currentOrder = table.dataset.sortOrder || 'desc';
+        const nextOrder = currentIndex === String(columnIndex) && currentOrder === 'desc' ? 'asc' : 'desc';
+        table.dataset.sortIndex = columnIndex;
+        table.dataset.sortOrder = nextOrder;
+
+        rows.sort((a, b) => {
+            const aCell = a.children[columnIndex + 1];
+            const bCell = b.children[columnIndex + 1];
+            const aValue = this.parseStatValue(aCell?.textContent);
+            const bValue = this.parseStatValue(bCell?.textContent);
+            if (aValue === null && bValue === null) return 0;
+            if (aValue === null) return 1;
+            if (bValue === null) return -1;
+            return nextOrder === 'asc' ? aValue - bValue : bValue - aValue;
+        });
+
+        rows.forEach(row => table.appendChild(row));
+
+        table.querySelectorAll('.stats-sortable').forEach(cell => {
+            cell.classList.remove('is-sorted', 'is-asc', 'is-desc');
+            cell.setAttribute('aria-sort', 'none');
+        });
+        rows.forEach(row => {
+            Array.from(row.children).forEach(child => child.classList.remove('is-sorted'));
+        });
+        if (activeCell) {
+            activeCell.classList.add('is-sorted');
+            activeCell.classList.add(nextOrder === 'asc' ? 'is-asc' : 'is-desc');
+            activeCell.setAttribute('aria-sort', nextOrder === 'asc' ? 'ascending' : 'descending');
+        }
+        rows.forEach(row => {
+            const cell = row.children[columnIndex + 1];
+            if (cell) {
+                cell.classList.add('is-sorted');
+            }
+        });
+    },
+
+    formatStatsTimestamp(timestamp) {
+        if (!timestamp) return '—';
+        try {
+            return timestamp.toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        } catch (error) {
+            return '—';
+        }
+    },
+
+    clearStatsAutoRefresh() {
+        if (this.statsState.refreshTimer) {
+            clearInterval(this.statsState.refreshTimer);
+            this.statsState.refreshTimer = null;
+        }
+    },
+
+    setStatsAutoRefresh(enabled) {
+        this.statsState.autoRefresh = Boolean(enabled);
+        this.clearStatsAutoRefresh();
+        const game = this.statsState.game;
+        if (!game || !this.statsState.autoRefresh) return;
+        this.statsState.refreshTimer = setInterval(() => {
+            this.refreshStats(true);
+        }, 30000);
+    },
+
+    async refreshStats(forceRefresh = false) {
+        const game = this.statsState.game;
+        if (!game) return;
+        const key = `${game.league || 'all'}:${game.slug || ''}`;
+        this.statsState.lastKey = key;
+        try {
+            const stats = await API.getGameStats(game, { forceRefresh });
+            if (this.statsState.lastKey !== key) return;
+            if (stats) {
+                this.statsState.status = 'ready';
+                this.statsState.data = stats;
+                this.statsState.lastUpdated = new Date();
+                this.renderStatsContent(stats);
+            }
+        } catch (error) {
+            console.warn('Failed to refresh stats:', error);
+        }
+    },
+
+    getStatsCompetition(payload) {
+        const header = payload?.header || {};
+        const competition = header?.competitions?.[0] || header?.competition || header?.competitions || null;
+        return competition && Array.isArray(competition) ? competition[0] : competition;
+    },
+
+    resolveStatsTeam(rawTeam, league) {
+        if (!rawTeam) return null;
+        return TeamsUtil.resolveTeam(rawTeam, league || this.embedState.currentLeague || Config.DEFAULT_LEAGUE);
+    },
+
+    getStatsRecordSummary(records = []) {
+        const list = Array.isArray(records) ? records : [];
+        const overall = list.find(record => record?.type === 'total') || list.find(record => record?.name === 'overall');
+        return overall?.summary || overall?.displayValue || '—';
+    },
+
+    getStatsStatusLabel(statusType = {}) {
+        const state = statusType?.state || '';
+        if (state === 'in') return 'Live';
+        if (state === 'post') return 'Final';
+        if (state === 'pre') return 'Upcoming';
+        return statusType?.shortDetail || statusType?.detail || statusType?.description || '—';
+    },
+
+    buildStatsHeader(payload) {
+        const competition = this.getStatsCompetition(payload);
+        const status = competition?.status?.type || payload?.header?.status?.type || {};
+        const competitors = competition?.competitors || [];
+        if (!competitors.length) return null;
+
+        const league = payload?.league || this.embedState.currentLeague || Config.DEFAULT_LEAGUE;
+        const away = competitors.find(team => team.homeAway === 'away') || competitors[1] || null;
+        const home = competitors.find(team => team.homeAway === 'home') || competitors[0] || null;
+        const list = [away, home].filter(Boolean);
+
+        if (!list.length) return null;
+
+        const header = document.createElement('div');
+        header.className = 'stats-header';
+
+        const meta = document.createElement('div');
+        meta.className = 'stats-header-meta';
+        const statusEl = document.createElement('div');
+        statusEl.className = 'stats-status';
+        statusEl.textContent = this.getStatsStatusLabel(status);
+
+        const detail = document.createElement('div');
+        detail.className = 'stats-meta';
+        const detailItems = [];
+        const venue = competition?.venue?.fullName || payload?.gameInfo?.venue?.fullName;
+        if (venue) detailItems.push(venue);
+        const broadcastNames = (payload?.broadcasts || competition?.broadcasts || [])
+            .flatMap(item => {
+                if (Array.isArray(item?.names)) return item.names;
+                if (item?.media?.shortName) return [item.media.shortName];
+                if (typeof item?.market === 'string') return [item.market];
+                return [];
+            })
+            .filter(Boolean);
+        if (broadcastNames.length) detailItems.push(broadcastNames.join(', '));
+        if (detailItems.length) {
+            detail.textContent = detailItems.join(' • ');
+        }
+
+        meta.appendChild(statusEl);
+        if (detailItems.length) meta.appendChild(detail);
+        header.appendChild(meta);
+
+        const teamsRow = document.createElement('div');
+        teamsRow.className = 'stats-header-teams';
+
+        list.forEach(competitor => {
+            const team = this.resolveStatsTeam(competitor?.team || {}, league);
+            const card = document.createElement('div');
+            card.className = 'stats-team-card';
+            if (competitor?.winner) card.classList.add('is-winner');
+
+            const logo = document.createElement('img');
+            logo.className = 'stats-team-logo hidden';
+            this.setTeamLogo(logo, team, league);
+
+            const info = document.createElement('div');
+            info.className = 'stats-team-info';
+
+            const name = document.createElement('div');
+            name.className = 'stats-team-name';
+            name.textContent = team?.shortName || team?.abbreviation || team?.name || competitor?.team?.shortDisplayName || 'Team';
+
+            const record = document.createElement('div');
+            record.className = 'stats-team-record';
+            record.textContent = this.getStatsRecordSummary(competitor?.records);
+
+            info.appendChild(name);
+            info.appendChild(record);
+
+            const score = document.createElement('div');
+            score.className = 'stats-team-score';
+            score.textContent = competitor?.score ?? competitor?.score?.displayValue ?? '—';
+
+            card.appendChild(logo);
+            card.appendChild(info);
+            card.appendChild(score);
+            teamsRow.appendChild(card);
+        });
+
+        header.appendChild(teamsRow);
+        return header;
+    },
+
+    buildStatsControls(payload) {
+        const controls = document.createElement('div');
+        controls.className = 'stats-controls';
+
+        const refreshBtn = document.createElement('button');
+        refreshBtn.type = 'button';
+        refreshBtn.className = 'btn btn-secondary stats-refresh';
+        refreshBtn.textContent = 'Refresh Stats';
+        refreshBtn.addEventListener('click', () => this.refreshStats(true));
+
+        const toggleLabel = document.createElement('label');
+        toggleLabel.className = 'stats-toggle';
+        const toggle = document.createElement('input');
+        toggle.type = 'checkbox';
+        toggle.checked = this.statsState.autoRefresh;
+        toggle.addEventListener('change', () => {
+            this.setStatsAutoRefresh(toggle.checked);
+            this.renderStatsContent(payload);
+        });
+        const toggleText = document.createElement('span');
+        toggleText.textContent = 'Auto-refresh (30s)';
+        toggleLabel.appendChild(toggle);
+        toggleLabel.appendChild(toggleText);
+
+        const updated = document.createElement('div');
+        updated.className = 'stats-updated';
+        updated.textContent = `Updated ${this.formatStatsTimestamp(this.statsState.lastUpdated)}`;
+
+        controls.appendChild(refreshBtn);
+        controls.appendChild(toggleLabel);
+        controls.appendChild(updated);
+
+        return controls;
+    },
+
+    buildLinescoreSection(payload) {
+        const competition = this.getStatsCompetition(payload);
+        const competitors = competition?.competitors || [];
+        if (!competitors.length) return null;
+
+        const linescoreCounts = competitors.map(team => (team?.linescores || []).length);
+        const maxPeriods = Math.max(...linescoreCounts, 0);
+        if (!maxPeriods) return null;
+
+        const section = document.createElement('div');
+        section.className = 'stats-section';
+        const title = document.createElement('div');
+        title.className = 'stats-section-title';
+        title.textContent = 'Line Score';
+        section.appendChild(title);
+
+        const table = document.createElement('div');
+        table.className = 'stats-team-table';
+
+        const headerRow = document.createElement('div');
+        headerRow.className = 'stats-team-row stats-team-header';
+        const teamHeader = document.createElement('div');
+        teamHeader.className = 'stats-team-cell';
+        teamHeader.textContent = 'Team';
+        headerRow.appendChild(teamHeader);
+
+        for (let i = 0; i < maxPeriods; i += 1) {
+            const cell = document.createElement('div');
+            cell.className = 'stats-team-cell';
+            cell.textContent = `Q${i + 1}`;
+            headerRow.appendChild(cell);
+        }
+        const finalCell = document.createElement('div');
+        finalCell.className = 'stats-team-cell';
+        finalCell.textContent = 'T';
+        headerRow.appendChild(finalCell);
+        table.appendChild(headerRow);
+
+        const league = payload?.league || this.embedState.currentLeague || Config.DEFAULT_LEAGUE;
+        competitors.forEach(entry => {
+            const row = document.createElement('div');
+            row.className = 'stats-team-row';
+            const team = this.resolveStatsTeam(entry?.team || {}, league);
+            const nameCell = document.createElement('div');
+            nameCell.className = 'stats-team-cell';
+            nameCell.textContent = team?.abbreviation || team?.shortName || team?.name || entry?.team?.shortDisplayName || '—';
+            row.appendChild(nameCell);
+
+            const lines = entry?.linescores || [];
+            for (let i = 0; i < maxPeriods; i += 1) {
+                const scoreCell = document.createElement('div');
+                scoreCell.className = 'stats-team-cell';
+                scoreCell.textContent = lines[i]?.displayValue ?? lines[i]?.value ?? '—';
+                row.appendChild(scoreCell);
+            }
+
+            const totalCell = document.createElement('div');
+            totalCell.className = 'stats-team-cell';
+            totalCell.textContent = entry?.score ?? entry?.score?.displayValue ?? '—';
+            row.appendChild(totalCell);
+            table.appendChild(row);
+        });
+
+        section.appendChild(table);
+        return section;
+    },
+
+    buildGamecastSection(payload) {
+        const playIndex = Array.isArray(payload?.plays?.plays)
+            ? payload.plays.plays
+            : (Array.isArray(payload?.plays?.allPlays) ? payload.plays.allPlays : []);
+        const scoringPlays = Array.isArray(payload?.scoringPlays)
+            ? payload.scoringPlays
+            : (Array.isArray(payload?.plays?.scoringPlays) ? payload.plays.scoringPlays : []);
+        const drivesPayload = payload?.drives || {};
+        const driveList = Array.isArray(drivesPayload)
+            ? drivesPayload
+            : ([]
+                .concat(drivesPayload?.previous || [])
+                .concat(drivesPayload?.current ? [drivesPayload.current] : [])
+                .concat(drivesPayload?.next || []));
+        const winProbability = Array.isArray(payload?.winProbability)
+            ? payload.winProbability
+            : (Array.isArray(payload?.winprobability) ? payload.winprobability : []);
+
+        if (!scoringPlays.length && !driveList.length && !winProbability.length) {
+            return null;
+        }
+
+        const section = document.createElement('div');
+        section.className = 'stats-section stats-gamecast';
+        const title = document.createElement('div');
+        title.className = 'stats-section-title';
+        title.textContent = 'Gamecast';
+        section.appendChild(title);
+
+        const grid = document.createElement('div');
+        grid.className = 'stats-gamecast-grid';
+
+        if (scoringPlays.length) {
+            const playsBlock = document.createElement('div');
+            playsBlock.className = 'stats-gamecast-block';
+            const header = document.createElement('div');
+            header.className = 'stats-gamecast-title';
+            header.textContent = 'Scoring Plays';
+            playsBlock.appendChild(header);
+
+            const list = document.createElement('div');
+            list.className = 'stats-gamecast-list';
+            scoringPlays.slice(0, 12).forEach(play => {
+                const resolvedPlay = (typeof play === 'string' || typeof play === 'number')
+                    ? playIndex.find(entry => String(entry?.id) === String(play)) || { id: play }
+                    : play;
+                const item = document.createElement('div');
+                item.className = 'stats-gamecast-item';
+                const playText = resolvedPlay?.text || resolvedPlay?.shortText || resolvedPlay?.summary || resolvedPlay?.description || 'Scoring play';
+                const clock = resolvedPlay?.clock?.displayValue || resolvedPlay?.clock?.display || resolvedPlay?.clock || '';
+                const period = resolvedPlay?.period?.number || resolvedPlay?.period?.displayValue || resolvedPlay?.period?.display || '';
+                const team = resolvedPlay?.team?.abbreviation || resolvedPlay?.team?.shortDisplayName || resolvedPlay?.team?.displayName || '';
+                const score = (resolvedPlay?.homeScore !== undefined && resolvedPlay?.awayScore !== undefined)
+                    ? `${resolvedPlay.awayScore}-${resolvedPlay.homeScore}`
+                    : (resolvedPlay?.scoreValue ? `${resolvedPlay.scoreValue} pts` : '');
+
+                const meta = document.createElement('div');
+                meta.className = 'stats-gamecast-meta';
+                meta.textContent = [team, period ? `Q${period}` : '', clock].filter(Boolean).join(' • ');
+
+                const detail = document.createElement('div');
+                detail.className = 'stats-gamecast-detail';
+                detail.textContent = playText;
+
+                const scoreEl = document.createElement('div');
+                scoreEl.className = 'stats-gamecast-score';
+                scoreEl.textContent = score;
+
+                item.appendChild(meta);
+                item.appendChild(detail);
+                if (score) item.appendChild(scoreEl);
+                list.appendChild(item);
+            });
+
+            playsBlock.appendChild(list);
+            grid.appendChild(playsBlock);
+        }
+
+        if (driveList.length) {
+            const driveBlock = document.createElement('div');
+            driveBlock.className = 'stats-gamecast-block';
+            const header = document.createElement('div');
+            header.className = 'stats-gamecast-title';
+            header.textContent = 'Drives';
+            driveBlock.appendChild(header);
+
+            const list = document.createElement('div');
+            list.className = 'stats-gamecast-list';
+            driveList.slice(0, 10).forEach(drive => {
+                const item = document.createElement('div');
+                item.className = 'stats-gamecast-item';
+                const team = drive?.team?.abbreviation || drive?.team?.shortDisplayName || drive?.team?.displayName || '';
+                const result = drive?.displayResult || drive?.result || '';
+                const plays = drive?.plays?.length || drive?.playCount || drive?.numberOfPlays || '';
+                const yards = drive?.yards || drive?.netYards || '';
+                const time = drive?.timeElapsed?.displayValue || drive?.timeElapsed || '';
+
+                const meta = document.createElement('div');
+                meta.className = 'stats-gamecast-meta';
+                meta.textContent = [team, result].filter(Boolean).join(' • ');
+
+                const detail = document.createElement('div');
+                detail.className = 'stats-gamecast-detail';
+                detail.textContent = [
+                    plays ? `${plays} plays` : '',
+                    yards ? `${yards} yds` : '',
+                    time ? time : ''
+                ].filter(Boolean).join(' • ') || 'Drive details unavailable';
+
+                item.appendChild(meta);
+                item.appendChild(detail);
+                list.appendChild(item);
+            });
+
+            driveBlock.appendChild(list);
+            grid.appendChild(driveBlock);
+        }
+
+        if (winProbability.length) {
+            const probBlock = document.createElement('div');
+            probBlock.className = 'stats-gamecast-block';
+            const header = document.createElement('div');
+            header.className = 'stats-gamecast-title';
+            header.textContent = 'Win Probability';
+            probBlock.appendChild(header);
+
+            const chart = document.createElement('div');
+            chart.className = 'stats-winprob';
+            const sample = winProbability.slice(-40);
+            sample.forEach(point => {
+                const bar = document.createElement('div');
+                bar.className = 'stats-winprob-bar';
+                const homeProb = point?.homeWinPercentage ?? point?.homeWinPercentage?.displayValue ?? point?.homeWinPercentage?.value ?? point?.homeWinProbability ?? point?.home ?? 0;
+                const percent = typeof homeProb === 'number' ? homeProb : parseFloat(homeProb);
+                const normalized = Number.isNaN(percent) ? 0 : (percent > 1 ? percent / 100 : percent);
+                bar.style.setProperty('--prob', Math.max(0, Math.min(1, normalized)));
+                chart.appendChild(bar);
+            });
+            probBlock.appendChild(chart);
+            grid.appendChild(probBlock);
+        }
+
+        section.appendChild(grid);
+        return section;
+    },
+
+    renderStatsContent(payload) {
+        const loading = document.getElementById('stats-loading');
+        const error = document.getElementById('stats-error');
+        const content = document.getElementById('stats-content');
+        if (!content) return;
+        loading?.classList.add('hidden');
+        error?.classList.add('hidden');
+        content.classList.remove('hidden');
+        content.innerHTML = '';
+
+        const fragment = document.createDocumentFragment();
+
+        const headerSection = this.buildStatsHeader(payload);
+        if (headerSection) {
+            fragment.appendChild(headerSection);
+        }
+
+        const controls = this.buildStatsControls(payload);
+        if (controls) {
+            fragment.appendChild(controls);
+        }
+
+        const leaders = Array.isArray(payload?.leaders) ? payload.leaders : [];
+        if (leaders.length) {
+            const validLeaders = leaders.map(group => {
+                const leader = (group?.leaders || []).find(entry => {
+                    const athlete = entry?.athlete || {};
+                    const value = entry?.displayValue ?? entry?.value;
+                    return athlete?.displayName && value !== undefined && value !== null && value !== '';
+                });
+                return leader ? { group, leader } : null;
+            }).filter(Boolean);
+
+            if (validLeaders.length) {
+                const section = document.createElement('div');
+                section.className = 'stats-section';
+                const title = document.createElement('div');
+                title.className = 'stats-section-title';
+                title.textContent = 'Leaders';
+                const grid = document.createElement('div');
+                grid.className = 'stats-leaders';
+
+                validLeaders.forEach(({ group, leader }) => {
+                    const athlete = leader?.athlete || {};
+                    const card = document.createElement('div');
+                    card.className = 'stats-leader-card';
+                    const photo = document.createElement('img');
+                    photo.className = 'stats-leader-photo';
+                    photo.alt = athlete?.displayName || '';
+                    const headshot = athlete?.headshot?.href || athlete?.headshot;
+                    if (headshot) {
+                        photo.src = headshot;
+                    }
+                    const meta = document.createElement('div');
+                    meta.className = 'stats-leader-meta';
+                    const name = document.createElement('div');
+                    name.className = 'stats-leader-name';
+                    name.textContent = athlete?.displayName || '—';
+                    const value = document.createElement('div');
+                    value.className = 'stats-leader-value';
+                    value.textContent = leader?.displayValue || leader?.value || '—';
+                    const label = document.createElement('div');
+                    label.className = 'stats-leader-label';
+                    label.textContent = group?.shortDisplayName || group?.name || 'Leader';
+                    meta.appendChild(name);
+                    meta.appendChild(value);
+                    meta.appendChild(label);
+                    card.appendChild(photo);
+                    card.appendChild(meta);
+                    grid.appendChild(card);
+                });
+
+                section.appendChild(title);
+                section.appendChild(grid);
+                fragment.appendChild(section);
+            }
+        }
+
+        const boxscore = payload?.boxscore || {};
+        const teamStats = Array.isArray(boxscore?.teams) ? boxscore.teams : [];
+        const players = Array.isArray(boxscore?.players) ? boxscore.players : [];
+
+        if (teamStats.length) {
+            const section = document.createElement('div');
+            section.className = 'stats-section';
+            const title = document.createElement('div');
+            title.className = 'stats-section-title';
+            title.textContent = 'Team Stats';
+            const table = document.createElement('div');
+            table.className = 'stats-team-table';
+
+            const headerRow = document.createElement('div');
+            headerRow.className = 'stats-team-row stats-team-header';
+            const labelCell = document.createElement('div');
+            labelCell.className = 'stats-team-cell';
+            labelCell.textContent = 'Stat';
+            headerRow.appendChild(labelCell);
+            teamStats.forEach(entry => {
+                const cell = document.createElement('div');
+                cell.className = 'stats-team-cell';
+                cell.textContent = entry?.team?.abbreviation || entry?.team?.shortDisplayName || '—';
+                headerRow.appendChild(cell);
+            });
+            table.appendChild(headerRow);
+
+            const statNames = new Map();
+            teamStats.forEach(entry => {
+                (entry?.statistics || []).forEach(stat => {
+                    const key = stat?.name || stat?.displayName || stat?.abbreviation;
+                    if (!key) return;
+                    if (!this.shouldIncludeTeamStat(stat)) return;
+                    if (!statNames.has(key)) {
+                        statNames.set(key, stat);
+                    }
+                });
+            });
+
+            statNames.forEach((statMeta, key) => {
+                const row = document.createElement('div');
+                row.className = 'stats-team-row';
+                const statCell = document.createElement('div');
+                statCell.className = 'stats-team-cell';
+                statCell.textContent = this.formatTeamStatLabel(statMeta);
+                row.appendChild(statCell);
+                teamStats.forEach(entry => {
+                    const stat = (entry?.statistics || []).find(item => (item?.name || item?.displayName || item?.abbreviation) === key);
+                    const cell = document.createElement('div');
+                    cell.className = 'stats-team-cell';
+                    cell.textContent = this.formatTeamStatValue(stat || statMeta);
+                    row.appendChild(cell);
+                });
+                table.appendChild(row);
+            });
+
+            if (statNames.size) {
+                section.appendChild(title);
+                section.appendChild(table);
+                fragment.appendChild(section);
+            }
+        }
+
+        if (players.length) {
+            const section = document.createElement('div');
+            section.className = 'stats-section';
+            const title = document.createElement('div');
+            title.className = 'stats-section-title';
+            title.textContent = 'Box Score';
+            section.appendChild(title);
+
+            players.forEach(teamGroup => {
+                const block = document.createElement('div');
+                block.className = 'stats-team-block';
+                const teamName = document.createElement('div');
+                teamName.className = 'stats-team-name';
+                teamName.textContent = teamGroup?.team?.displayName || teamGroup?.team?.name || 'Team';
+                block.appendChild(teamName);
+
+                (teamGroup?.statistics || []).forEach(statGroup => {
+                    const category = document.createElement('div');
+                    category.className = 'stats-category';
+                    const categoryTitle = document.createElement('div');
+                    categoryTitle.className = 'stats-category-title';
+                    categoryTitle.textContent = statGroup?.displayName || statGroup?.name || 'Stats';
+                    category.appendChild(categoryTitle);
+
+                    const table = document.createElement('div');
+                    table.className = 'stats-table';
+                    const headerRow = document.createElement('div');
+                    headerRow.className = 'stats-row stats-row-header';
+                    const playerHeader = document.createElement('div');
+                    playerHeader.className = 'stats-cell stats-player';
+                    playerHeader.textContent = 'Player';
+                    headerRow.appendChild(playerHeader);
+
+                    const labels = statGroup?.labels || statGroup?.headers || statGroup?.shortDisplayName || [];
+                    const labelList = Array.isArray(labels) ? labels : [];
+                    labelList.forEach(label => {
+                        const cell = document.createElement('div');
+                        cell.className = 'stats-cell';
+                        cell.textContent = label;
+                        headerRow.appendChild(cell);
+                    });
+                    table.appendChild(headerRow);
+
+                    const athletes = statGroup?.athletes || statGroup?.players || [];
+                    athletes.forEach(player => {
+                        const row = document.createElement('div');
+                        row.className = 'stats-row';
+                        const playerCell = document.createElement('div');
+                        playerCell.className = 'stats-cell stats-player';
+                        const img = document.createElement('img');
+                        img.className = 'stats-player-photo';
+                        const athlete = player?.athlete || player?.player || {};
+                        const headshot = athlete?.headshot?.href || athlete?.headshot;
+                        if (headshot) {
+                            img.src = headshot;
+                        }
+                        img.alt = athlete?.displayName || '';
+                        img.loading = 'lazy';
+                        const name = document.createElement('span');
+                        name.className = 'stats-player-name';
+                        name.textContent = athlete?.shortName || athlete?.displayName || '—';
+                        playerCell.appendChild(img);
+                        playerCell.appendChild(name);
+                        row.appendChild(playerCell);
+
+                        const statsList = player?.stats || player?.statistics || [];
+                        labelList.forEach((_, index) => {
+                            const cell = document.createElement('div');
+                            cell.className = 'stats-cell';
+                            cell.textContent = statsList[index] ?? '—';
+                            row.appendChild(cell);
+                        });
+                        table.appendChild(row);
+                    });
+
+                    this.makeStatsTableSortable(table);
+                    category.appendChild(table);
+                    block.appendChild(category);
+                });
+
+                section.appendChild(block);
+            });
+
+            fragment.appendChild(section);
+        }
+
+        const lineScoreSection = this.buildLinescoreSection(payload);
+        if (lineScoreSection) {
+            fragment.appendChild(lineScoreSection);
+        }
+
+        const gamecastSection = this.buildGamecastSection(payload);
+        if (gamecastSection) {
+            fragment.appendChild(gamecastSection);
+        }
+
+        if (!fragment.childNodes.length) {
+            const empty = document.createElement('div');
+            empty.className = 'stats-empty';
+            empty.textContent = 'Stats are not available yet.';
+            fragment.appendChild(empty);
+        }
+
+        content.appendChild(fragment);
     },
 
     /**

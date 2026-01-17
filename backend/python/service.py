@@ -66,6 +66,43 @@ ESPN_STANDINGS_ENDPOINTS = {
         'https://site.api.espn.com/apis/v2/sports/hockey/nhl/standings'
     )
 }
+ESPN_SCOREBOARD_ENDPOINTS = {
+    'nfl': os.environ.get(
+        'ESPN_SCOREBOARD_URL_NFL',
+        'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard'
+    ),
+    'nba': os.environ.get(
+        'ESPN_SCOREBOARD_URL_NBA',
+        'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard'
+    ),
+    'mlb': os.environ.get(
+        'ESPN_SCOREBOARD_URL_MLB',
+        'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard'
+    ),
+    'nhl': os.environ.get(
+        'ESPN_SCOREBOARD_URL_NHL',
+        'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard'
+    )
+}
+ESPN_SUMMARY_ENDPOINTS = {
+    'nfl': os.environ.get(
+        'ESPN_SUMMARY_URL_NFL',
+        'https://site.api.espn.com/apis/site/v2/sports/football/nfl/summary'
+    ),
+    'nba': os.environ.get(
+        'ESPN_SUMMARY_URL_NBA',
+        'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary'
+    ),
+    'mlb': os.environ.get(
+        'ESPN_SUMMARY_URL_MLB',
+        'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/summary'
+    ),
+    'nhl': os.environ.get(
+        'ESPN_SUMMARY_URL_NHL',
+        'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary'
+    )
+}
+STATS_CACHE_TTL_SEC = int(os.environ.get('STATS_CACHE_TTL_SEC', '60'))
 STREAMED_IMAGE_BASE = os.environ.get('STREAMED_IMAGE_BASE', 'https://streamed.pk')
 TEAM_CACHE_TTL_SEC = int(os.environ.get('TEAM_CACHE_TTL_SEC', '43200'))
 TEAM_CACHE_STALE_SEC = int(os.environ.get('TEAM_CACHE_STALE_SEC', '604800'))
@@ -386,6 +423,7 @@ GAME_CACHE = GameCache(CACHE_PATH)
 TEAM_CACHES = {league: TeamCache(path) for league, path in TEAM_CACHE_PATHS.items()}
 STANDINGS_CACHES = {}
 HEALTH_CACHE = HealthCache(HEALTH_TTL_SEC)
+STATS_CACHE = {}
 
 
 def get_standings_cache(league, season=None):
@@ -416,7 +454,123 @@ def fetch_json(url):
         except Exception as exc:
             last_error = exc
             time.sleep(BACKOFF_BASE_SEC * (2 ** attempt))
-    raise last_error
+    if last_error:
+        raise last_error
+    raise RuntimeError('Failed to fetch JSON')
+
+
+def normalize_team_name(value):
+    if not value:
+        return ''
+    normalized = str(value).lower()
+    normalized = normalized.replace('&', 'and')
+    normalized = normalized.replace('st.', 'st')
+    normalized = normalized.replace('saint', 'st')
+    normalized = re.sub(r'[^a-z0-9 ]', '', normalized)
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    return normalized
+
+
+def format_scoreboard_date(value):
+    if not value:
+        return None
+    cleaned = re.sub(r'[^0-9]', '', value)
+    if len(cleaned) >= 8:
+        return cleaned[:8]
+    return None
+
+
+def fetch_espn_scoreboard(league, date_value=None):
+    base = ESPN_SCOREBOARD_ENDPOINTS.get(league)
+    if not base:
+        return None
+    if date_value:
+        return fetch_json(f"{base}?dates={date_value}")
+    return fetch_json(base)
+
+
+def find_espn_event(scoreboard, away_abbr=None, home_abbr=None, away_name=None, home_name=None):
+    if not scoreboard:
+        return None
+    target_abbrs = {abbr.upper() for abbr in (away_abbr, home_abbr) if abbr}
+    target_names = {normalize_team_name(name) for name in (away_name, home_name) if name}
+    best_event = None
+    best_score = 0
+    for event in scoreboard.get('events', []):
+        competitions = event.get('competitions') or []
+        if not competitions:
+            continue
+        competitors = competitions[0].get('competitors') or []
+        event_abbrs = set()
+        event_names = set()
+        for entry in competitors:
+            team = entry.get('team') or {}
+            abbr = team.get('abbreviation')
+            if abbr:
+                event_abbrs.add(abbr.upper())
+            for name in (
+                team.get('displayName'),
+                team.get('shortDisplayName'),
+                team.get('name'),
+                team.get('location')
+            ):
+                normalized = normalize_team_name(name)
+                if normalized:
+                    event_names.add(normalized)
+        if target_abbrs and target_abbrs.issubset(event_abbrs):
+            return event
+        if target_names and target_names.issubset(event_names):
+            return event
+        score = 0
+        if target_abbrs:
+            score += len(target_abbrs.intersection(event_abbrs)) * 3
+        if target_names:
+            for target in target_names:
+                for candidate in event_names:
+                    if not target or not candidate:
+                        continue
+                    if target == candidate:
+                        score += 3
+                    elif target in candidate or candidate in target:
+                        score += 2
+        event_label = normalize_team_name(event.get('shortName') or event.get('name'))
+        if event_label:
+            for target in target_names:
+                if target and target in event_label:
+                    score += 1
+        if score > best_score:
+            best_score = score
+            best_event = event
+    if best_score >= 2:
+        return best_event
+    return None
+
+
+def fetch_espn_summary(league, event_id):
+    base = ESPN_SUMMARY_ENDPOINTS.get(league)
+    if not base or not event_id:
+        return None
+    return fetch_json(f"{base}?event={event_id}")
+
+
+def get_cached_stats(key):
+    if not key:
+        return None
+    entry = STATS_CACHE.get(key)
+    if not entry:
+        return None
+    if time.time() - entry['ts'] > STATS_CACHE_TTL_SEC:
+        return None
+    return copy.deepcopy(entry['data'])
+
+
+def set_cached_stats(key, payload):
+    if not key:
+        return
+    STATS_CACHE[key] = {
+        'ts': time.time(),
+        'data': copy.deepcopy(payload)
+    }
 
 
 def fetch_matches(endpoint):
@@ -431,7 +585,9 @@ def fetch_matches(endpoint):
         except Exception as exc:
             last_error = exc
             logging.warning('Failed to fetch %s from %s: %s', endpoint, base, exc)
-    raise last_error
+    if last_error:
+        raise last_error
+    raise RuntimeError('Failed to fetch matches')
 
 
 def to_int(value):
@@ -780,13 +936,15 @@ def annotate_sources(sources, include_health, checks_budget=None):
 
 def sort_sources(sources):
     def source_rank(source):
-        name = source.get('source') or ''
-        health = (source.get('health') or {}).get('status')
+        safe_source = source if isinstance(source, dict) else {}
+        name = safe_source.get('source') or ''
+        health = (safe_source.get('health') or {}).get('status')
+        health_key = health if isinstance(health, str) else ''
         health_score = {
             'up': 0,
             'unknown': 1,
             'down': 2
-        }.get(health, 1)
+        }.get(health_key, 1)
         try:
             pref_index = SOURCE_PREFERENCE.index(name)
         except ValueError:
@@ -1102,6 +1260,66 @@ class RequestHandler(BaseHTTPRequestHandler):
             }
             return self._send_json(200, payload)
 
+        if path == '/stats':
+            league = (query.get('league') or ['nfl'])[0].lower()
+            away_name = (query.get('away') or [''])[0]
+            home_name = (query.get('home') or [''])[0]
+            away_abbr = (query.get('abbrAway') or [''])[0]
+            home_abbr = (query.get('abbrHome') or [''])[0]
+            date_value = format_scoreboard_date((query.get('date') or [''])[0])
+            force_refresh = (query.get('force') or ['0'])[0] in ('1', 'true', 'yes')
+
+            scoreboard = fetch_espn_scoreboard(league, date_value)
+            event = find_espn_event(scoreboard, away_abbr, home_abbr, away_name, home_name)
+            if not event and date_value:
+                scoreboard = fetch_espn_scoreboard(league, None)
+                event = find_espn_event(scoreboard, away_abbr, home_abbr, away_name, home_name)
+
+            if not event:
+                return self._send_json(404, {
+                    'error': 'event_not_found',
+                    'message': 'Unable to locate ESPN event for this matchup.'
+                })
+
+            event_id = event.get('id')
+            cache_key = f"{league}:{event_id}"
+            cached = None if force_refresh else get_cached_stats(cache_key)
+            if cached:
+                return self._send_json(200, cached)
+
+            summary = fetch_espn_summary(league, event_id)
+            if not summary:
+                return self._send_json(502, {
+                    'error': 'summary_unavailable',
+                    'message': 'Unable to fetch ESPN summary.'
+                })
+
+            win_probability = summary.get('winProbability') or summary.get('winprobability')
+            payload = {
+                'eventId': event_id,
+                'league': league,
+                'header': summary.get('header'),
+                'boxscore': summary.get('boxscore'),
+                'leaders': summary.get('leaders'),
+                'injuries': summary.get('injuries'),
+                'broadcasts': summary.get('broadcasts'),
+                'gameInfo': summary.get('gameInfo'),
+                'notes': summary.get('notes'),
+                'standings': summary.get('standings'),
+                'drives': summary.get('drives'),
+                'plays': summary.get('plays'),
+                'scoringPlays': summary.get('scoringPlays'),
+                'winProbability': win_probability,
+                'probability': summary.get('probability'),
+                'odds': summary.get('odds'),
+                'meta': {
+                    'source': summary.get('meta', {}),
+                    'date': date_value
+                }
+            }
+            set_cached_stats(cache_key, payload)
+            return self._send_json(200, payload)
+
         if path == '/standings':
             league = (query.get('league') or ['nfl'])[0].lower()
             force_refresh = (query.get('force') or ['0'])[0] in ('1', 'true', 'yes')
@@ -1120,9 +1338,12 @@ class RequestHandler(BaseHTTPRequestHandler):
                     )
                     if not cache_ok:
                         continue
+                    standings = snapshot.get('standings') or {}
+                    if not isinstance(standings, dict):
+                        standings = {}
                     standings_payload.append({
                         'league': league_key,
-                        **(snapshot.get('standings') or {})
+                        **standings
                     })
                     stale = stale or league_stale
                     cache_age = max(cache_age, league_age)
