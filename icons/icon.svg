@@ -1,6 +1,75 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#0a0a0a"/>
-  <rect x="24" y="24" width="464" height="464" rx="80" fill="#141414"/>
-  <path d="M120 340c40-70 130-165 290-155" stroke="#ffffff" stroke-width="48" fill="none" stroke-linecap="round"/>
-  <circle cx="370" cy="210" r="50" fill="#22c55e"/>
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#0a0a0a"/>
+    </linearGradient>
+    <linearGradient id="eyeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22c55e"/>
+      <stop offset="100%" stop-color="#16a34a"/>
+    </linearGradient>
+    <linearGradient id="irisGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4ade80"/>
+      <stop offset="40%" stop-color="#22c55e"/>
+      <stop offset="100%" stop-color="#15803d"/>
+    </linearGradient>
+    <linearGradient id="pupilGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#000000"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="innerShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="4" result="blur"/>
+      <feOffset dx="0" dy="2" result="offsetBlur"/>
+      <feComposite in="SourceGraphic" in2="offsetBlur" operator="over"/>
+    </filter>
+    <clipPath id="eyeClip">
+      <path d="M256 140 Q80 256 256 372 Q432 256 256 140 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="102" fill="url(#bgGrad)"/>
+
+  <!-- Subtle border -->
+  <rect x="3" y="3" width="506" height="506" rx="100" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="2"/>
+
+  <!-- Eye glow behind -->
+  <ellipse cx="256" cy="256" rx="160" ry="100" fill="#22c55e" opacity="0.15" filter="url(#glow)"/>
+
+  <!-- Eye white (sclera) -->
+  <path d="M256 140 Q80 256 256 372 Q432 256 256 140 Z" fill="#f8fafc" filter="url(#innerShadow)"/>
+
+  <!-- Eye outline -->
+  <path d="M256 140 Q80 256 256 372 Q432 256 256 140 Z" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="3"/>
+
+  <!-- Iris outer ring -->
+  <circle cx="256" cy="256" r="85" fill="url(#irisGrad)" clip-path="url(#eyeClip)"/>
+
+  <!-- Iris detail rings -->
+  <circle cx="256" cy="256" r="75" fill="none" stroke="#15803d" stroke-width="2" opacity="0.5" clip-path="url(#eyeClip)"/>
+  <circle cx="256" cy="256" r="65" fill="none" stroke="#166534" stroke-width="1" opacity="0.3" clip-path="url(#eyeClip)"/>
+
+  <!-- Pupil -->
+  <circle cx="256" cy="256" r="40" fill="url(#pupilGrad)" clip-path="url(#eyeClip)"/>
+
+  <!-- Pupil inner depth -->
+  <circle cx="256" cy="256" r="30" fill="#000000" clip-path="url(#eyeClip)"/>
+
+  <!-- Eye reflection/highlight -->
+  <ellipse cx="235" cy="230" rx="18" ry="22" fill="white" opacity="0.9" clip-path="url(#eyeClip)"/>
+  <ellipse cx="280" cy="270" rx="8" ry="10" fill="white" opacity="0.4" clip-path="url(#eyeClip)"/>
+
+  <!-- Upper eyelid shadow -->
+  <path d="M256 140 Q80 256 256 372" fill="none" stroke="rgba(0,0,0,0.2)" stroke-width="8"/>
+
+  <!-- Eyelid crease hints -->
+  <path d="M100 220 Q256 120 412 220" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2"/>
+  <path d="M100 292 Q256 392 412 292" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="2"/>
 </svg>

@@ -1,5 +1,57 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" fill="#0a0a0a"/>
-  <path d="M100 320c35-60 115-145 255-135" stroke="#ffffff" stroke-width="42" fill="none" stroke-linecap="round"/>
-  <circle cx="320" cy="200" r="44" fill="#22c55e"/>
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#0a0a0a"/>
+    </linearGradient>
+    <linearGradient id="irisGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4ade80"/>
+      <stop offset="40%" stop-color="#22c55e"/>
+      <stop offset="100%" stop-color="#15803d"/>
+    </linearGradient>
+    <linearGradient id="pupilGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#000000"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <clipPath id="eyeClip">
+      <path d="M256 160 Q100 256 256 352 Q412 256 256 160 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background - full bleed for maskable -->
+  <rect width="512" height="512" fill="url(#bgGrad)"/>
+
+  <!-- Eye glow behind -->
+  <ellipse cx="256" cy="256" rx="140" ry="85" fill="#22c55e" opacity="0.15" filter="url(#glow)"/>
+
+  <!-- Eye white (sclera) -->
+  <path d="M256 160 Q100 256 256 352 Q412 256 256 160 Z" fill="#f8fafc"/>
+
+  <!-- Eye outline -->
+  <path d="M256 160 Q100 256 256 352 Q412 256 256 160 Z" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="3"/>
+
+  <!-- Iris -->
+  <circle cx="256" cy="256" r="72" fill="url(#irisGrad)" clip-path="url(#eyeClip)"/>
+
+  <!-- Iris detail rings -->
+  <circle cx="256" cy="256" r="62" fill="none" stroke="#15803d" stroke-width="2" opacity="0.5" clip-path="url(#eyeClip)"/>
+  <circle cx="256" cy="256" r="52" fill="none" stroke="#166534" stroke-width="1" opacity="0.3" clip-path="url(#eyeClip)"/>
+
+  <!-- Pupil -->
+  <circle cx="256" cy="256" r="34" fill="url(#pupilGrad)" clip-path="url(#eyeClip)"/>
+  <circle cx="256" cy="256" r="26" fill="#000000" clip-path="url(#eyeClip)"/>
+
+  <!-- Eye reflection/highlight -->
+  <ellipse cx="238" cy="235" rx="15" ry="18" fill="white" opacity="0.9" clip-path="url(#eyeClip)"/>
+  <ellipse cx="276" cy="268" rx="7" ry="9" fill="white" opacity="0.4" clip-path="url(#eyeClip)"/>
+
+  <!-- Upper eyelid shadow -->
+  <path d="M256 160 Q100 256 256 352" fill="none" stroke="rgba(0,0,0,0.15)" stroke-width="6"/>
 </svg>
