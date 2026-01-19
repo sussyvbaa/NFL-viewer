@@ -17,6 +17,7 @@ const buildCacheKey = (filterValue, league) => `${filterValue}:${league}`;
 module.exports = async (req, res) => {
     const filterValue = (req.query.filter || 'all').toString();
     const league = (req.query.league || 'all').toString().toLowerCase();
+    const debug = (req.query.debug || '0').toString() === '1';
     const cacheKey = buildCacheKey(filterValue, league);
     const now = Date.now();
     const entry = cache.entries.get(cacheKey);
@@ -51,6 +52,15 @@ module.exports = async (req, res) => {
         games = sortGames(games, league);
         games = await applyLiveScores(games);
 
+        if (games.length === 0 && (liveMatches.length || allMatches.length)) {
+            console.warn('No games matched filters.', {
+                filterValue,
+                league,
+                liveMatches: liveMatches.length,
+                allMatches: allMatches.length
+            });
+        }
+
         cache.entries.set(cacheKey, {
             games,
             timestamp: Date.now(),
@@ -66,10 +76,20 @@ module.exports = async (req, res) => {
                 cacheAgeSec: 0,
                 stale: false,
                 upstreamBase: source,
-                fromCache: false
+                fromCache: false,
+                ...(debug ? {
+                    debug: {
+                        liveMatches: liveMatches.length,
+                        allMatches: allMatches.length
+                    }
+                } : {}),
+                ...(games.length === 0 && (liveMatches.length || allMatches.length) ? {
+                    warning: 'No games matched filters; check league keywords or upstream data.'
+                } : {})
             }
         });
     } catch (error) {
+        console.error('Failed to fetch games:', error);
         if (entry) {
             res.status(200).json({
                 games: entry.games,

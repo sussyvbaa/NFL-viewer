@@ -222,6 +222,10 @@ const API = {
                 meta
             };
             this.cache.forceNext = false;
+            if (!games.length) {
+                const message = meta?.warning || meta?.error || 'No games returned from API.';
+                console.warn(message, meta || {});
+            }
 
             return games;
         } catch (error) {
