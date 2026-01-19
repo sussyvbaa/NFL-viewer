@@ -2069,6 +2069,61 @@ button.watch-tab.is-active:active {
     height: calc(12px + (56px * var(--prob, 0)));
 }
 
+.stats-playbyplay {
+    padding: 1rem;
+    border-radius: var(--radius-lg);
+    border: 1px solid rgba(255,255,255,0.06);
+    background: rgba(255,255,255,0.02);
+}
+
+.stats-playbyplay-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.stats-playbyplay-list {
+    display: grid;
+    gap: 0.6rem;
+    max-height: 520px;
+    overflow-y: auto;
+    padding-right: 0.25rem;
+}
+
+.stats-playbyplay-item {
+    display: grid;
+    gap: 0.3rem;
+    padding: 0.65rem 0.75rem;
+    border-radius: var(--radius-md);
+    background: rgba(0,0,0,0.2);
+    border: 1px solid rgba(255,255,255,0.05);
+}
+
+.stats-playbyplay-item.is-scoring {
+    border-color: rgba(92, 191, 255, 0.4);
+    background: rgba(92, 191, 255, 0.08);
+}
+
+.stats-playbyplay-meta {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.stats-playbyplay-detail {
+    font-size: 0.8rem;
+    color: var(--text-primary);
+}
+
+.stats-playbyplay-score {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
 .stats-sortable {
     position: relative;
     cursor: pointer;
@@ -2262,6 +2317,65 @@ button.watch-tab.is-active:active {
     .stats-team-cell:first-child,
     .stats-cell.stats-player {
         flex-basis: 160px;
+    }
+
+    .stats-actions {
+        width: 100%;
+        justify-content: flex-start;
+        gap: 0.5rem;
+    }
+
+    .stats-season-control {
+        width: 100%;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+    }
+
+    .stats-season-input {
+        flex: 1 1 160px;
+        text-align: left;
+    }
+
+    .stats-league-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .stats-league-pill {
+        align-self: flex-start;
+    }
+
+    .player-category-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .player-leader-row {
+        grid-template-columns: auto 1fr;
+        justify-content: space-between;
+    }
+
+    .player-value {
+        justify-self: end;
+    }
+
+    .player-stats-shell {
+        padding: 1rem;
+    }
+
+    .player-filter-row {
+        width: 100%;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+        padding-bottom: 0.25rem;
+    }
+
+    .player-filter-toggles {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .player-stats-table {
+        min-width: 860px;
     }
 }
 
@@ -2738,6 +2852,600 @@ button.watch-tab.is-active:active {
     display: flex;
     flex-direction: column;
     gap: 2rem;
+}
+
+.stats-hub {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.stats-subtitle {
+    margin: 0.4rem 0 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.stats-actions {
+    gap: 0.6rem;
+}
+
+.stats-season-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.stats-season-input {
+    min-width: 140px;
+    text-align: center;
+    cursor: text;
+}
+
+.stats-hub-content {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.stats-hub.is-players .stats-options {
+    display: none;
+}
+
+.stats-hub.is-players .stats-season-control {
+    display: none;
+}
+
+.stats-hub:not(.is-mlb) .player-mode-tabs {
+    display: none;
+}
+
+.player-stats-shell {
+    display: grid;
+    gap: 0.75rem;
+    background: #0b0b0b;
+    border-radius: var(--radius-lg);
+    border: 1px solid rgba(255,255,255,0.08);
+    padding: 1.25rem;
+}
+
+.player-stats-toolbar {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.player-filter-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.player-filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+.player-mode-tabs {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.player-mode-tab {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0.35rem 0;
+    border-bottom: 2px solid transparent;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    transition: color var(--transition), border-color var(--transition);
+}
+
+.player-mode-tab.is-active {
+    color: var(--text-primary);
+    border-bottom-color: var(--text-primary);
+}
+
+.player-filter-select {
+    height: 2.2rem;
+    padding: 0 0.9rem;
+    font-size: 0.75rem;
+    background: rgba(255,255,255,0.04);
+    color: var(--text-primary);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.player-filter-toggles {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 0.6rem;
+    padding: 0.2rem;
+}
+
+.player-toggle {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 0.35rem 0.75rem;
+    border-radius: 0.45rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+}
+
+.player-toggle.is-active {
+    color: var(--text-primary);
+    background: rgba(255,255,255,0.08);
+}
+
+.player-toggle-accent {
+    border: 1px solid rgba(74, 163, 255, 0.5);
+    color: #4aa3ff;
+    background: rgba(74, 163, 255, 0.12);
+}
+
+.player-stats-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.player-stats-summary {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.player-stats-pagination {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.player-page-btn {
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.04);
+    color: var(--text-primary);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 0.35rem 0.7rem;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+
+.player-page-btn:hover:not(:disabled) {
+    border-color: rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.08);
+}
+
+.player-page-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.player-page-info {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.player-stats-table-holder {
+    display: grid;
+    gap: 1rem;
+}
+
+.player-stats-league {
+    display: grid;
+    gap: 0.65rem;
+}
+
+.player-stats-league + .player-stats-league {
+    margin-top: 1rem;
+}
+
+.player-stats-league-title {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.player-stats-table-wrap {
+    overflow-x: auto;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: var(--radius-md);
+    background: rgba(0,0,0,0.4);
+}
+
+.player-stats-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 980px;
+}
+
+.player-stats-table thead th {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    padding: 0.75rem 0.6rem;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    text-align: right;
+}
+
+.player-stats-table thead th.is-sortable {
+    cursor: pointer;
+}
+
+.player-stats-table thead th button {
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.35rem;
+    padding: 0;
+    cursor: inherit;
+}
+
+.player-stats-table thead th.is-sorted {
+    color: var(--text-primary);
+}
+
+.player-stats-table thead th.is-sorted[data-dir="asc"] button::after {
+    content: '^';
+    font-size: 0.6rem;
+    opacity: 0.7;
+}
+
+.player-stats-table thead th.is-sorted[data-dir="desc"] button::after {
+    content: 'v';
+    font-size: 0.6rem;
+    opacity: 0.7;
+}
+
+.player-stats-table thead th:first-child,
+.player-stats-table thead th:nth-child(2),
+.player-stats-table thead th:nth-child(3) {
+    text-align: left;
+}
+
+.player-stats-table thead th:first-child button,
+.player-stats-table thead th:nth-child(2) button,
+.player-stats-table thead th:nth-child(3) button {
+    justify-content: flex-start;
+}
+
+.player-stats-table tbody td {
+    padding: 0.6rem;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    text-align: right;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.player-stats-table tbody tr:nth-child(even) td {
+    background: rgba(255,255,255,0.02);
+}
+
+.player-stats-table tbody td:first-child,
+.player-stats-table tbody td:nth-child(2),
+.player-stats-table tbody td:nth-child(3) {
+    text-align: left;
+}
+
+.player-cell {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.player-cell .player-avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 0.55rem;
+}
+
+.player-cell-name {
+    display: grid;
+    gap: 0.15rem;
+}
+
+.player-cell-name span {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.player-cell-name small {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.stats-hub-tabs {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.25rem;
+}
+
+.stats-hub-tab {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 0.5rem 0.1rem;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color var(--transition), border-color var(--transition);
+}
+
+.stats-hub-tab:hover {
+    color: var(--text-primary);
+}
+
+.stats-hub-tab.is-active {
+    color: var(--text-primary);
+    border-bottom-color: var(--text-primary);
+}
+
+.stats-hub-panel {
+    display: none;
+}
+
+.stats-hub-panel.is-active {
+    display: block;
+    animation: fadeSlideUp 0.4s ease forwards;
+}
+
+.stats-league-card {
+    --league-accent: 255, 255, 255;
+    position: relative;
+    border-radius: var(--radius-lg);
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.02);
+    padding: 1.25rem;
+    overflow: hidden;
+}
+
+.stats-league-card::before {
+    content: '';
+    position: absolute;
+    top: -60%;
+    right: -10%;
+    width: 320px;
+    height: 320px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(var(--league-accent), 0.25), transparent 70%);
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.stats-league-card[data-league="nfl"] {
+    --league-accent: 110, 204, 255;
+}
+
+.stats-league-card[data-league="nba"] {
+    --league-accent: 255, 154, 98;
+}
+
+.stats-league-card[data-league="mlb"] {
+    --league-accent: 127, 227, 167;
+}
+
+.stats-league-card[data-league="nhl"] {
+    --league-accent: 123, 223, 242;
+}
+
+.stats-league-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    position: relative;
+    z-index: 1;
+    margin-bottom: 1rem;
+}
+
+.stats-league-title-wrap {
+    display: grid;
+    gap: 0.35rem;
+}
+
+.stats-league-title {
+    font-family: var(--font-display);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 1rem;
+    color: var(--text-primary);
+}
+
+.stats-league-meta {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.stats-league-pill {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
+    border: 1px solid rgba(var(--league-accent), 0.5);
+    color: rgba(var(--league-accent), 0.95);
+    background: rgba(var(--league-accent), 0.12);
+    white-space: nowrap;
+}
+
+.stats-league-groups {
+    display: grid;
+    gap: 1rem;
+    position: relative;
+    z-index: 1;
+}
+
+.stats-league-card .standings-group {
+    background: rgba(0,0,0,0.15);
+    border-color: rgba(255,255,255,0.06);
+    padding: 1.1rem;
+    box-shadow: none;
+    transform: none;
+}
+
+.stats-league-card .standings-group:hover {
+    transform: none;
+    box-shadow: none;
+    border-color: rgba(255,255,255,0.12);
+}
+
+.stats-league-card .standings-group-title {
+    color: rgba(var(--league-accent), 0.9);
+    border-bottom-color: rgba(255,255,255,0.08);
+}
+
+.stats-league-card--players {
+    padding: 1.1rem;
+}
+
+.player-category-grid {
+    display: grid;
+    gap: 0.9rem;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.player-category-card {
+    background: rgba(0,0,0,0.18);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: var(--radius-md);
+    padding: 0.75rem;
+    display: grid;
+    gap: 0.6rem;
+}
+
+.player-category-title {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.player-leader-list {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.player-leader-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.45rem 0.5rem;
+    border-radius: var(--radius-md);
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.05);
+}
+
+.player-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    overflow: hidden;
+    position: relative;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    display: grid;
+    place-items: center;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.player-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.player-avatar span {
+    display: none;
+}
+
+.player-avatar.is-fallback span {
+    display: block;
+}
+
+.player-avatar.is-fallback img {
+    display: none;
+}
+
+.player-info {
+    min-width: 0;
+    display: grid;
+    gap: 0.15rem;
+}
+
+.player-name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.player-meta {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.player-value {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-primary);
 }
 
 .standings-group {

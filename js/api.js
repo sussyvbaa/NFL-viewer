@@ -161,6 +161,16 @@ const API = {
         ttl: 20000,
         forceNext: false
     },
+    playerLeadersCache: {
+        byKey: {},
+        ttl: 300000,
+        forceNext: false
+    },
+    playerStatsCache: {
+        byKey: {},
+        ttl: 120000,
+        forceNext: false
+    },
 
     /**
      * Fetch games from the backend
@@ -570,6 +580,126 @@ const API = {
         }
     },
 
+    async fetchPlayerLeaders(league, options = {}) {
+        const now = Date.now();
+        const seasonKey = options.season || 'current';
+        const limit = options.limit || 5;
+        const type = options.type || '2';
+        const mode = options.mode || 'hitting';
+        const key = `${league || Config.DEFAULT_LEAGUE}:${seasonKey}:${type}:${limit}:${mode}`;
+        const entry = this.playerLeadersCache.byKey[key];
+        const force = Boolean(options.forceRefresh || this.playerLeadersCache.forceNext);
+
+        if (!force && entry && (now - entry.lastFetch) < this.playerLeadersCache.ttl) {
+            return entry.data || null;
+        }
+
+        try {
+            const url = new URL(`${this.BASE_URL}/leaders`, window.location.origin);
+            url.searchParams.set('league', league || Config.DEFAULT_LEAGUE);
+            if (options.season) {
+                url.searchParams.set('season', options.season);
+            }
+            if (options.type) {
+                url.searchParams.set('type', options.type);
+            }
+            if (options.limit) {
+                url.searchParams.set('limit', options.limit);
+            }
+            if (options.mode) {
+                url.searchParams.set('mode', options.mode);
+            }
+            if (force) {
+                url.searchParams.set('force', '1');
+            }
+
+            const response = await fetch(url.toString(), {
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`Player leaders API responded with ${response.status}`);
+            }
+
+            const data = await response.json();
+            this.playerLeadersCache.byKey[key] = {
+                data,
+                lastFetch: now
+            };
+            this.playerLeadersCache.forceNext = false;
+            return data;
+        } catch (error) {
+            console.error('Failed to fetch player leaders:', error);
+            return null;
+        }
+    },
+
+    async fetchPlayerStats(league, options = {}) {
+        const now = Date.now();
+        const seasonKey = options.season || 'current';
+        const view = options.view || 'standard';
+        const mode = options.mode || 'hitting';
+        const position = options.position || 'all';
+        const page = options.page || 1;
+        const perPage = options.perPage || 50;
+        const key = `${league || Config.DEFAULT_LEAGUE}:${seasonKey}:${view}:${mode}:${position}:${page}:${perPage}`;
+        const entry = this.playerStatsCache.byKey[key];
+        const force = Boolean(options.forceRefresh || this.playerStatsCache.forceNext);
+
+        if (!force && entry && (now - entry.lastFetch) < this.playerStatsCache.ttl) {
+            return entry.data || null;
+        }
+
+        try {
+            const url = new URL(`${this.BASE_URL}/players`, window.location.origin);
+            url.searchParams.set('league', league || Config.DEFAULT_LEAGUE);
+            if (options.season) {
+                url.searchParams.set('season', options.season);
+            }
+            if (options.view) {
+                url.searchParams.set('view', options.view);
+            }
+            if (options.mode) {
+                url.searchParams.set('mode', options.mode);
+            }
+            if (options.position) {
+                url.searchParams.set('position', options.position);
+            }
+            if (options.page) {
+                url.searchParams.set('page', options.page);
+            }
+            if (options.perPage) {
+                url.searchParams.set('perPage', options.perPage);
+            }
+            if (force) {
+                url.searchParams.set('force', '1');
+            }
+
+            const response = await fetch(url.toString(), {
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`Player stats API responded with ${response.status}`);
+            }
+
+            const data = await response.json();
+            this.playerStatsCache.byKey[key] = {
+                data,
+                lastFetch: now
+            };
+            this.playerStatsCache.forceNext = false;
+            return data;
+        } catch (error) {
+            console.error('Failed to fetch player stats:', error);
+            return null;
+        }
+    },
+
     /**
      * Fetch playoff brackets
      * @param {string} league - League key
@@ -639,6 +769,16 @@ const API = {
     clearStandingsCache() {
         this.standingsCache.byLeague = {};
         this.standingsCache.forceNext = true;
+    },
+
+    clearPlayerLeadersCache() {
+        this.playerLeadersCache.byKey = {};
+        this.playerLeadersCache.forceNext = true;
+    },
+
+    clearPlayerStatsCache() {
+        this.playerStatsCache.byKey = {};
+        this.playerStatsCache.forceNext = true;
     },
 
     /**

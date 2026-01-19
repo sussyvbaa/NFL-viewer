@@ -36,6 +36,7 @@
                 <a href="#/" class="logo">Sports Viewer</a>
                 <nav class="nav">
                     <a href="#/" class="nav-link">Games</a>
+                    <a href="#/stats" class="nav-link">Stats</a>
                     <a href="#/standings" class="nav-link">Standings</a>
                     <a href="#/multi" class="nav-link">Multi-View</a>
                 </nav>
@@ -358,6 +359,90 @@
             <div id="multi-empty" class="multi-empty hidden">
                 <p>No games selected yet.</p>
                 <a href="#/" class="btn btn-primary">Browse Games</a>
+            </div>
+        </div>
+    </template>
+
+    <template id="stats-hub-template">
+        <div class="stats-hub">
+            <div class="page-header">
+                <div>
+                    <h1 class="page-title">Stats</h1>
+                    <p class="stats-subtitle">Team standings and player stats powered by ESPN public data.</p>
+                </div>
+                <div class="page-actions stats-actions">
+                    <select id="stats-league" class="standings-select"></select>
+                    <div class="stats-season-control">
+                        <input id="stats-season" class="standings-select stats-season-input" type="text" inputmode="numeric" placeholder="Season (YYYY)">
+                        <button id="stats-season-current" class="btn btn-secondary btn-small" type="button">Current</button>
+                    </div>
+                    <button id="stats-refresh" class="btn btn-secondary refresh-btn" type="button" title="Refresh stats">
+                        <span class="refresh-icon">&#8635;</span> Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="standings-options stats-options">
+                <label class="standings-option stats-option">
+                    <span>View</span>
+                    <select id="stats-view" class="standings-select"></select>
+                </label>
+                <label class="standings-option stats-option">
+                    <span>Sort</span>
+                    <select id="stats-sort" class="standings-select"></select>
+                </label>
+                <label class="standings-toggle stats-toggle">
+                    <input type="checkbox" id="stats-rank">
+                    Show ranks
+                </label>
+            </div>
+            <div class="stats-hub-tabs">
+                <button class="stats-hub-tab is-active" type="button" data-tab="teams">Teams</button>
+                <button class="stats-hub-tab" type="button" data-tab="players">Players</button>
+            </div>
+            <div id="stats-status" class="data-status"></div>
+            <div id="stats-hub-tab-teams" class="stats-hub-panel is-active">
+                <div id="stats-teams-content" class="stats-hub-content"></div>
+                <div id="stats-teams-empty" class="stats-empty hidden">
+                    <p>No team stats data available for this season.</p>
+                </div>
+            </div>
+            <div id="stats-hub-tab-players" class="stats-hub-panel">
+                    <div id="stats-players-content" class="stats-hub-content">
+                        <div class="player-stats-shell">
+                            <div class="player-stats-toolbar">
+                                <div class="player-mode-tabs">
+                                    <button class="player-mode-tab is-active" type="button" data-mode="hitting">Hitting</button>
+                                    <button class="player-mode-tab" type="button" data-mode="pitching">Pitching</button>
+                                </div>
+                                <div class="player-filter-row">
+                                    <label class="player-filter-group">
+                                        <span>Year</span>
+                                        <select id="player-season-filter" class="player-filter-select"></select>
+                                    </label>
+                                    <label class="player-filter-group">
+                                        <span>Position</span>
+                                        <select id="player-position-filter" class="player-filter-select"></select>
+                                    </label>
+                                    <div class="player-filter-toggles" role="tablist" aria-label="Stats view">
+                                        <button class="player-toggle is-active" type="button" data-view="standard" aria-pressed="true">Standard</button>
+                                        <button class="player-toggle" type="button" data-view="expanded" aria-pressed="false">Expanded</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="player-stats-meta">
+                                <div id="player-stats-summary" class="player-stats-summary"></div>
+                                <div id="player-stats-pagination" class="player-stats-pagination">
+                                    <button id="player-page-prev" class="player-page-btn" type="button">Prev</button>
+                                    <span id="player-page-info" class="player-page-info"></span>
+                                    <button id="player-page-next" class="player-page-btn" type="button">Next</button>
+                                </div>
+                            </div>
+                            <div id="stats-players-table" class="player-stats-table-holder"></div>
+                        </div>
+                    </div>
+                <div id="stats-players-empty" class="stats-empty hidden">
+                    <p>No player stats data available for this season.</p>
+                </div>
             </div>
         </div>
     </template>

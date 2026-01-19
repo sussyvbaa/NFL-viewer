@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sports-viewer-v4';
+const CACHE_NAME = 'sports-viewer-v9';
 const STATIC_ASSETS = [
     '/',
     '/index.html',

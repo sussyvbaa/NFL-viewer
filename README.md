@@ -13,6 +13,9 @@ A clean, minimal web application for watching sports streams (NFL, NBA, MLB, NHL
 - **Team Logos**: ESPN API first with streamed badge fallback
 - **Standings**: View NFL/NBA/MLB/NHL standings
 - **Standings Options**: Divisions/conferences/overall views, sort controls, and rank numbers
+- **Stats Hub**: Player stats tables with season, position, and standard/expanded views
+- **Sortable Tables**: Click stat headers to sort player stats per page
+- **Pagination**: Browse full league rosters with page controls
 - **Dark Mode**: Clean, distraction-free dark interface
 - **Fullscreen Support**: Watch games in fullscreen mode
 - **Refresh Button**: Manually refresh game list to get latest updates
@@ -53,7 +56,8 @@ AUTO_START_PYTHON=false npm start
 4. **Switch streams** - Use the stream selector (1-5) if one doesn't work
 5. **Multi-View** - Add up to 4 games and watch them side-by-side
 6. **Standings** - Check NFL/NBA/MLB/NHL standings
-7. **Refresh** - Click the refresh button to get the latest game list
+7. **Stats** - Browse player stats and sort columns
+8. **Refresh** - Click the refresh button to get the latest game list
 
 ## Project Structure
 
@@ -124,6 +128,13 @@ Example:
 ```
 https://embedsports.top/embed/admin/ppv-buffalo-bills-vs-new-york-jets/1
 ```
+
+## Stats Data
+
+Player stats and standings are sourced from ESPN endpoints via the local backend:
+
+- `/api/players`: Roster-based player stats with pagination and filtering
+- `/api/standings`: Team standings for supported leagues
 
 ## Security Considerations
 

@@ -7,6 +7,7 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
@@ -102,7 +103,20 @@ ESPN_SUMMARY_ENDPOINTS = {
         'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/summary'
     )
 }
+CORE_API_BASE = os.environ.get('ESPN_CORE_API_BASE', 'https://sports.core.api.espn.com/v2/sports')
+CORE_SPORTS = {
+    'nfl': 'football',
+    'nba': 'basketball',
+    'mlb': 'baseball',
+    'nhl': 'hockey'
+}
 STATS_CACHE_TTL_SEC = int(os.environ.get('STATS_CACHE_TTL_SEC', '60'))
+PLAYER_LEADERS_CACHE_TTL_SEC = int(os.environ.get('PLAYER_LEADERS_CACHE_TTL_SEC', '900'))
+PLAYER_INDEX_CACHE_TTL_SEC = int(os.environ.get('PLAYER_INDEX_CACHE_TTL_SEC', '3600'))
+PLAYER_PROFILE_CACHE_TTL_SEC = int(os.environ.get('PLAYER_PROFILE_CACHE_TTL_SEC', '3600'))
+PLAYER_STATS_CACHE_TTL_SEC = int(os.environ.get('PLAYER_STATS_CACHE_TTL_SEC', '900'))
+PLAYER_PAGE_CACHE_TTL_SEC = int(os.environ.get('PLAYER_PAGE_CACHE_TTL_SEC', '120'))
+PLAYER_FETCH_WORKERS = int(os.environ.get('PLAYER_FETCH_WORKERS', '12'))
 STREAMED_IMAGE_BASE = os.environ.get('STREAMED_IMAGE_BASE', 'https://streamed.pk')
 TEAM_CACHE_TTL_SEC = int(os.environ.get('TEAM_CACHE_TTL_SEC', '43200'))
 TEAM_CACHE_STALE_SEC = int(os.environ.get('TEAM_CACHE_STALE_SEC', '604800'))
@@ -424,6 +438,16 @@ TEAM_CACHES = {league: TeamCache(path) for league, path in TEAM_CACHE_PATHS.item
 STANDINGS_CACHES = {}
 HEALTH_CACHE = HealthCache(HEALTH_TTL_SEC)
 STATS_CACHE = {}
+PLAYER_LEADERS_CACHE = {}
+PLAYER_INDEX_CACHE = {}
+PLAYER_PROFILE_CACHE = {}
+PLAYER_STATS_CACHE = {}
+PLAYER_PAGE_CACHE = {}
+
+PLAYER_INDEX_LOCK = threading.Lock()
+PLAYER_PROFILE_LOCK = threading.Lock()
+PLAYER_STATS_LOCK = threading.Lock()
+PLAYER_PAGE_LOCK = threading.Lock()
 
 
 def get_standings_cache(league, season=None):
@@ -551,6 +575,1021 @@ def fetch_espn_summary(league, event_id):
     if not base or not event_id:
         return None
     return fetch_json(f"{base}?event={event_id}")
+
+
+def normalize_core_ref(ref):
+    if not ref:
+        return None
+    text = str(ref)
+    if text.startswith('http://'):
+        return f"https://{text[len('http://'):]}"
+    return text
+
+
+def extract_season_year(ref):
+    if not ref:
+        return None
+    match = re.search(r'/seasons/([0-9]{4})', str(ref))
+    return match.group(1) if match else None
+
+
+def fetch_core_seasons(league):
+    sport = CORE_SPORTS.get(league)
+    if not sport:
+        return []
+    data = fetch_json(f"{CORE_API_BASE}/{sport}/leagues/{league}/seasons")
+    items = data.get('items') or []
+    refs = []
+    for item in items:
+        if isinstance(item, dict):
+            ref = item.get('$ref') or item.get('href')
+            if ref:
+                refs.append(ref)
+    return refs
+
+
+def resolve_core_season(league, season_value):
+    candidates = resolve_core_season_candidates(league, season_value)
+    return candidates[0] if candidates else None
+
+
+def resolve_core_season_candidates(league, season_value):
+    if season_value and str(season_value).lower() != 'current':
+        cleaned = re.sub(r'[^0-9]', '', str(season_value))
+        if len(cleaned) >= 4:
+            return [cleaned[:4]]
+        return []
+
+    candidates = []
+    for ref in fetch_core_seasons(league):
+        year = extract_season_year(ref)
+        if year:
+            candidates.append(year)
+    return candidates
+
+
+def resolve_core_payload(ref, cache):
+    url = normalize_core_ref(ref)
+    if not url:
+        return None
+    if url in cache:
+        return cache[url]
+    try:
+        payload = fetch_json(url)
+    except Exception:
+        return None
+    cache[url] = payload
+    return payload
+
+
+def get_ttl_cached(cache, lock, key, ttl):
+    if not key:
+        return None
+    with lock:
+        entry = cache.get(key)
+    if not entry:
+        return None
+    if time.time() - entry['ts'] > ttl:
+        return None
+    return entry['data']
+
+
+def set_ttl_cached(cache, lock, key, payload):
+    if not key:
+        return
+    with lock:
+        cache[key] = {
+            'ts': time.time(),
+            'data': payload
+        }
+
+
+def get_ttl_cached_with_age(cache, lock, key, ttl):
+    if not key:
+        return None, None
+    with lock:
+        entry = cache.get(key)
+    if not entry:
+        return None, None
+    age = time.time() - entry['ts']
+    if age > ttl:
+        return None, None
+    return entry['data'], int(age)
+
+
+def append_query_param(url, param):
+    if not url or not param:
+        return url
+    joiner = '&' if '?' in url else '?'
+    return f"{url}{joiner}{param}"
+
+
+def extract_id_from_ref(ref, segment):
+    if not ref or not segment:
+        return None
+    pattern = rf"/{re.escape(segment)}/(\\d+)"
+    match = re.search(pattern, str(ref))
+    return match.group(1) if match else None
+
+
+def fetch_core_items(url):
+    if not url:
+        return []
+    payload = fetch_json(url)
+    items = payload.get('items') or []
+    try:
+        page_index = int(payload.get('pageIndex') or 1)
+        page_count = int(payload.get('pageCount') or 1)
+    except (TypeError, ValueError):
+        page_index = 1
+        page_count = 1
+    if page_count > page_index:
+        for page in range(page_index + 1, page_count + 1):
+            page_url = append_query_param(url, f"page={page}")
+            page_payload = fetch_json(page_url)
+            items.extend(page_payload.get('items') or [])
+    return items
+
+
+def fetch_core_team_refs(league, season_year):
+    sport = CORE_SPORTS.get(league)
+    if not sport or not season_year:
+        return [], None
+    url = f"{CORE_API_BASE}/{sport}/leagues/{league}/seasons/{season_year}/teams?limit=200"
+    items = fetch_core_items(url)
+    refs = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        ref = item.get('$ref') or item.get('href')
+        ref = normalize_core_ref(ref)
+        if ref:
+            refs.append(ref)
+    return refs, url
+
+
+def fetch_team_roster_refs(league, season_year, team_id):
+    sport = CORE_SPORTS.get(league)
+    if not sport or not season_year or not team_id:
+        return []
+    url = f"{CORE_API_BASE}/{sport}/leagues/{league}/seasons/{season_year}/teams/{team_id}/athletes?limit=200"
+    items = fetch_core_items(url)
+    refs = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        ref = item.get('$ref') or item.get('href')
+        ref = normalize_core_ref(ref)
+        if ref:
+            refs.append(ref)
+    return refs
+
+
+def get_cached_player_leaders(key):
+    if not key:
+        return None
+    entry = PLAYER_LEADERS_CACHE.get(key)
+    if not entry:
+        return None
+    age = time.time() - entry['ts']
+    if age > PLAYER_LEADERS_CACHE_TTL_SEC:
+        return None
+    data = copy.deepcopy(entry['data'])
+    meta = data.get('meta')
+    if isinstance(meta, dict):
+        meta['cacheAgeSec'] = int(age)
+        meta['fromCache'] = True
+    return data
+
+
+def set_cached_player_leaders(key, payload):
+    if not key:
+        return
+    PLAYER_LEADERS_CACHE[key] = {
+        'ts': time.time(),
+        'data': copy.deepcopy(payload)
+    }
+
+PLAYER_STATS_SCHEMAS = {
+    'mlb': {
+        'hitting': {
+            'leaderCategory': 'avg',
+            'statCategories': ['batting'],
+            'columns': [
+                {'key': 'g', 'label': 'G', 'keys': ['teamGamesPlayed', 'gamesPlayed', 'G', 'GP']},
+                {'key': 'ab', 'label': 'AB', 'keys': ['atBats', 'AB']},
+                {'key': 'r', 'label': 'R', 'keys': ['runs', 'R']},
+                {'key': 'h', 'label': 'H', 'keys': ['hits', 'H']},
+                {'key': '2b', 'label': '2B', 'keys': ['doubles', '2B']},
+                {'key': '3b', 'label': '3B', 'keys': ['triples', '3B']},
+                {'key': 'hr', 'label': 'HR', 'keys': ['homeRuns', 'HR']},
+                {'key': 'rbi', 'label': 'RBI', 'keys': ['RBIs', 'RBI']},
+                {'key': 'bb', 'label': 'BB', 'keys': ['walks', 'BB']},
+                {'key': 'so', 'label': 'SO', 'keys': ['strikeouts', 'SO', 'K']},
+                {'key': 'sb', 'label': 'SB', 'keys': ['stolenBases', 'SB']},
+                {'key': 'cs', 'label': 'CS', 'keys': ['caughtStealing', 'CS']},
+                {'key': 'avg', 'label': 'AVG', 'keys': ['avg', 'battingAverage', 'AVG']},
+                {'key': 'obp', 'label': 'OBP', 'keys': ['onBasePct', 'onBasePercentage', 'OBP']},
+                {'key': 'slg', 'label': 'SLG', 'keys': ['slugAvg', 'sluggingPercentage', 'SLG']},
+                {'key': 'ops', 'label': 'OPS', 'keys': ['OPS', 'onBasePlusSlugging']}
+            ]
+        },
+        'pitching': {
+            'leaderCategory': 'ERA',
+            'statCategories': ['pitching'],
+            'columns': [
+                {'key': 'g', 'label': 'G', 'keys': ['gamesPlayed', 'GP', 'G']},
+                {'key': 'gs', 'label': 'GS', 'keys': ['gamesStarted', 'GS']},
+                {'key': 'ip', 'label': 'IP', 'keys': ['innings', 'IP']},
+                {'key': 'w', 'label': 'W', 'keys': ['wins', 'W']},
+                {'key': 'l', 'label': 'L', 'keys': ['losses', 'L']},
+                {'key': 'sv', 'label': 'SV', 'keys': ['saves', 'SV']},
+                {'key': 'so', 'label': 'SO', 'keys': ['strikeouts', 'SO', 'K']},
+                {'key': 'bb', 'label': 'BB', 'keys': ['walks', 'BB']},
+                {'key': 'era', 'label': 'ERA', 'keys': ['ERA', 'earnedRunAverage']},
+                {'key': 'whip', 'label': 'WHIP', 'keys': ['WHIP', 'walksHitsPerInningPitched']}
+            ]
+        }
+    },
+    'nba': {
+        'hitting': {
+            'leaderCategory': 'pointsPerGame',
+            'statCategories': ['offensive', 'general', 'defensive'],
+            'columns': [
+                {'key': 'g', 'label': 'G', 'keys': ['gamesPlayed', 'GP'], 'categories': ['general']},
+                {'key': 'min', 'label': 'MIN', 'keys': ['avgMinutes', 'minutes', 'MIN'], 'categories': ['general']},
+                {'key': 'pts', 'label': 'PTS', 'keys': ['avgPoints', 'points', 'PTS'], 'categories': ['offensive']},
+                {'key': 'reb', 'label': 'REB', 'keys': ['avgRebounds', 'rebounds', 'REB'], 'categories': ['general']},
+                {'key': 'ast', 'label': 'AST', 'keys': ['avgAssists', 'assists', 'AST'], 'categories': ['offensive']},
+                {'key': 'stl', 'label': 'STL', 'keys': ['avgSteals', 'steals', 'STL'], 'categories': ['defensive']},
+                {'key': 'blk', 'label': 'BLK', 'keys': ['avgBlocks', 'blocks', 'BLK'], 'categories': ['defensive']},
+                {'key': 'fgp', 'label': 'FG%', 'keys': ['fieldGoalPct', 'FG%'], 'categories': ['offensive']},
+                {'key': 'tpp', 'label': '3P%', 'keys': ['threePointPct', 'threePointFieldGoalPct', '3P%'], 'categories': ['offensive']},
+                {'key': 'ftp', 'label': 'FT%', 'keys': ['freeThrowPct', 'FT%'], 'categories': ['offensive']}
+            ]
+        },
+        'pitching': {
+            'leaderCategory': 'blocksPerGame',
+            'statCategories': ['defensive', 'general'],
+            'columns': [
+                {'key': 'g', 'label': 'G', 'keys': ['gamesPlayed', 'GP'], 'categories': ['general']},
+                {'key': 'min', 'label': 'MIN', 'keys': ['avgMinutes', 'minutes', 'MIN'], 'categories': ['general']},
+                {'key': 'reb', 'label': 'REB', 'keys': ['avgRebounds', 'rebounds', 'REB'], 'categories': ['general']},
+                {'key': 'stl', 'label': 'STL', 'keys': ['avgSteals', 'steals', 'STL'], 'categories': ['defensive']},
+                {'key': 'blk', 'label': 'BLK', 'keys': ['avgBlocks', 'blocks', 'BLK'], 'categories': ['defensive']},
+                {'key': 'pf', 'label': 'PF', 'keys': ['fouls', 'personalFouls', 'PF'], 'categories': ['general']}
+            ]
+        }
+    },
+    'nfl': {
+        'hitting': {
+            'leaderCategory': 'passingYards',
+            'statCategories': ['passing', 'general'],
+            'columns': [
+                {'key': 'g', 'label': 'G', 'keys': ['gamesPlayed', 'GP'], 'categories': ['general']},
+                {'key': 'cmp', 'label': 'CMP', 'keys': ['completions', 'CMP'], 'categories': ['passing']},
+                {'key': 'att', 'label': 'ATT', 'keys': ['passingAttempts', 'ATT'], 'categories': ['passing']},
+                {'key': 'yds', 'label': 'YDS', 'keys': ['passingYards', 'YDS'], 'categories': ['passing']},
+                {'key': 'td', 'label': 'TD', 'keys': ['passingTouchdowns', 'TD'], 'categories': ['passing']},
+                {'key': 'int', 'label': 'INT', 'keys': ['interceptions', 'INT'], 'categories': ['passing']},
+                {'key': 'rtg', 'label': 'RTG', 'keys': ['QBRating', 'passerRating', 'rating', 'RTG'], 'categories': ['passing']}
+            ]
+        },
+        'pitching': {
+            'leaderCategory': 'totalTackles',
+            'statCategories': ['defensive', 'defensiveInterceptions', 'general'],
+            'columns': [
+                {'key': 'g', 'label': 'G', 'keys': ['gamesPlayed', 'GP'], 'categories': ['general']},
+                {'key': 'tot', 'label': 'TOT', 'keys': ['totalTackles', 'TOT'], 'categories': ['defensive']},
+                {'key': 'sack', 'label': 'SACK', 'keys': ['sacks', 'SACK'], 'categories': ['defensive']},
+                {'key': 'tfl', 'label': 'TFL', 'keys': ['tacklesForLoss', 'TFL'], 'categories': ['defensive']},
+                {'key': 'pd', 'label': 'PD', 'keys': ['passesDefended', 'PD'], 'categories': ['defensive']},
+                {'key': 'int', 'label': 'INT', 'keys': ['interceptions', 'INT'], 'categories': ['defensiveInterceptions', 'defensive']}
+            ]
+        }
+    },
+    'nhl': {
+        'hitting': {
+            'leaderCategory': 'points',
+            'statCategories': ['offensive', 'general'],
+            'columns': [
+                {'key': 'gp', 'label': 'GP', 'keys': ['games', 'gamesPlayed', 'GP'], 'categories': ['general']},
+                {'key': 'g', 'label': 'G', 'keys': ['goals', 'G'], 'categories': ['offensive']},
+                {'key': 'a', 'label': 'A', 'keys': ['assists', 'A'], 'categories': ['offensive']},
+                {'key': 'pts', 'label': 'PTS', 'keys': ['points', 'PTS'], 'categories': ['offensive']},
+                {'key': 'ppg', 'label': 'PPG', 'keys': ['powerPlayGoals', 'PPG'], 'categories': ['offensive']},
+                {'key': 's', 'label': 'S', 'keys': ['shotsTotal', 'S'], 'categories': ['offensive']}
+            ]
+        },
+        'pitching': {
+            'leaderCategory': 'savePct',
+            'statCategories': ['defensive', 'general'],
+            'columns': [
+                {'key': 'gp', 'label': 'GP', 'keys': ['games', 'gamesPlayed', 'GP'], 'categories': ['general']},
+                {'key': 'ga', 'label': 'GA', 'keys': ['goalsAgainst', 'GA'], 'categories': ['defensive']},
+                {'key': 'gaa', 'label': 'GAA', 'keys': ['avgGoalsAgainst', 'GAA'], 'categories': ['defensive']},
+                {'key': 'sv', 'label': 'SV', 'keys': ['saves', 'SV'], 'categories': ['defensive']},
+                {'key': 'svp', 'label': 'SV%', 'keys': ['savePct', 'SV%'], 'categories': ['defensive']},
+                {'key': 'so', 'label': 'SO', 'keys': ['shutouts', 'SO'], 'categories': ['defensive']}
+            ]
+        }
+    }
+}
+
+DEFAULT_PLAYER_STATS_MODE = 'hitting'
+DEFAULT_PLAYER_TABLE_VIEW = 'standard'
+
+PLAYER_TABLE_SCHEMAS = {
+    'nfl': {
+        'standard': {
+            'statCategories': ['passing', 'rushing', 'receiving', 'defensive', 'defensiveInterceptions', 'general'],
+            'columns': [
+                {'key': 'g', 'label': 'G', 'keys': ['gamesPlayed', 'GP'], 'categories': ['general']},
+                {'key': 'passYds', 'label': 'PASS YDS', 'keys': ['passingYards', 'passYards', 'netPassingYards'], 'categories': ['passing']},
+                {'key': 'passTd', 'label': 'PASS TD', 'keys': ['passingTouchdowns', 'passTD', 'passTd'], 'categories': ['passing']},
+                {'key': 'int', 'label': 'INT', 'keys': ['interceptions', 'INT'], 'categories': ['passing']},
+                {'key': 'rushYds', 'label': 'RUSH YDS', 'keys': ['rushingYards', 'rushYds'], 'categories': ['rushing']},
+                {'key': 'rushTd', 'label': 'RUSH TD', 'keys': ['rushingTouchdowns', 'rushTd'], 'categories': ['rushing']},
+                {'key': 'rec', 'label': 'REC', 'keys': ['receptions', 'rec'], 'categories': ['receiving']},
+                {'key': 'recYds', 'label': 'REC YDS', 'keys': ['receivingYards', 'recYds'], 'categories': ['receiving']},
+                {'key': 'recTd', 'label': 'REC TD', 'keys': ['receivingTouchdowns', 'recTd'], 'categories': ['receiving']},
+                {'key': 'tackles', 'label': 'TCK', 'keys': ['totalTackles', 'tackles', 'TOT'], 'categories': ['defensive']},
+                {'key': 'sacks', 'label': 'SACK', 'keys': ['sacks', 'SACK'], 'categories': ['defensive']},
+                {'key': 'defInt', 'label': 'DEF INT', 'keys': ['interceptions', 'INT'], 'categories': ['defensiveInterceptions', 'defensive']}
+            ]
+        },
+        'expanded': {
+            'statCategories': ['passing', 'rushing', 'receiving', 'defensive', 'defensiveInterceptions', 'general'],
+            'columns': [
+                {'key': 'g', 'label': 'G', 'keys': ['gamesPlayed', 'GP'], 'categories': ['general']},
+                {'key': 'cmp', 'label': 'CMP', 'keys': ['completions', 'CMP'], 'categories': ['passing']},
+                {'key': 'att', 'label': 'ATT', 'keys': ['passingAttempts', 'ATT'], 'categories': ['passing']},
+                {'key': 'cmpPct', 'label': 'CMP%', 'keys': ['completionPct'], 'categories': ['passing']},
+                {'key': 'ypa', 'label': 'Y/A', 'keys': ['yardsPerAttempt', 'avgGain'], 'categories': ['passing']},
+                {'key': 'passYds', 'label': 'PASS YDS', 'keys': ['passingYards', 'passYards', 'netPassingYards'], 'categories': ['passing']},
+                {'key': 'passTd', 'label': 'PASS TD', 'keys': ['passingTouchdowns', 'passTD', 'passTd'], 'categories': ['passing']},
+                {'key': 'int', 'label': 'INT', 'keys': ['interceptions', 'INT'], 'categories': ['passing']},
+                {'key': 'qbr', 'label': 'QBR', 'keys': ['ESPNQBRating', 'QBRating', 'passerRating', 'rating'], 'categories': ['passing']},
+                {'key': 'rushAtt', 'label': 'RUSH ATT', 'keys': ['rushingAttempts', 'rushAtt'], 'categories': ['rushing']},
+                {'key': 'rushYds', 'label': 'RUSH YDS', 'keys': ['rushingYards', 'rushYds'], 'categories': ['rushing']},
+                {'key': 'ypc', 'label': 'YPC', 'keys': ['yardsPerRushAttempt', 'avgGain'], 'categories': ['rushing']},
+                {'key': 'rushTd', 'label': 'RUSH TD', 'keys': ['rushingTouchdowns', 'rushTd'], 'categories': ['rushing']},
+                {'key': 'targets', 'label': 'TGT', 'keys': ['receivingTargets', 'targets'], 'categories': ['receiving']},
+                {'key': 'rec', 'label': 'REC', 'keys': ['receptions', 'rec'], 'categories': ['receiving']},
+                {'key': 'recYds', 'label': 'REC YDS', 'keys': ['receivingYards', 'recYds'], 'categories': ['receiving']},
+                {'key': 'ypr', 'label': 'Y/REC', 'keys': ['yardsPerReception', 'avgGain'], 'categories': ['receiving']},
+                {'key': 'recTd', 'label': 'REC TD', 'keys': ['receivingTouchdowns', 'recTd'], 'categories': ['receiving']},
+                {'key': 'tackles', 'label': 'TCK', 'keys': ['totalTackles', 'tackles', 'TOT'], 'categories': ['defensive']},
+                {'key': 'tfl', 'label': 'TFL', 'keys': ['tacklesForLoss', 'TFL'], 'categories': ['defensive']},
+                {'key': 'sacks', 'label': 'SACK', 'keys': ['sacks', 'SACK'], 'categories': ['defensive']},
+                {'key': 'pd', 'label': 'PD', 'keys': ['passesDefended', 'PD'], 'categories': ['defensive']},
+                {'key': 'ff', 'label': 'FF', 'keys': ['fumblesForced', 'FF'], 'categories': ['defensive']},
+                {'key': 'fr', 'label': 'FR', 'keys': ['fumblesRecovered', 'FR'], 'categories': ['defensive']},
+                {'key': 'defInt', 'label': 'DEF INT', 'keys': ['interceptions', 'INT'], 'categories': ['defensiveInterceptions', 'defensive']}
+            ]
+        }
+    },
+    'nba': {
+        'standard': {
+            'statCategories': ['offensive', 'defensive', 'general'],
+            'columns': [
+                {'key': 'g', 'label': 'G', 'keys': ['gamesPlayed', 'GP'], 'categories': ['general']},
+                {'key': 'min', 'label': 'MIN', 'keys': ['avgMinutes', 'minutes', 'MIN'], 'categories': ['general']},
+                {'key': 'pts', 'label': 'PTS', 'keys': ['avgPoints', 'points', 'PTS'], 'categories': ['offensive']},
+                {'key': 'reb', 'label': 'REB', 'keys': ['avgRebounds', 'rebounds', 'REB'], 'categories': ['general']},
+                {'key': 'ast', 'label': 'AST', 'keys': ['avgAssists', 'assists', 'AST'], 'categories': ['offensive']},
+                {'key': 'stl', 'label': 'STL', 'keys': ['avgSteals', 'steals', 'STL'], 'categories': ['defensive']},
+                {'key': 'blk', 'label': 'BLK', 'keys': ['avgBlocks', 'blocks', 'BLK'], 'categories': ['defensive']},
+                {'key': 'fgp', 'label': 'FG%', 'keys': ['fieldGoalPct', 'FG%'], 'categories': ['offensive']},
+                {'key': 'tpp', 'label': '3P%', 'keys': ['threePointPct', 'threePointFieldGoalPct', '3P%'], 'categories': ['offensive']},
+                {'key': 'ftp', 'label': 'FT%', 'keys': ['freeThrowPct', 'FT%'], 'categories': ['offensive']},
+                {'key': 'tov', 'label': 'TOV', 'keys': ['avgTurnovers', 'turnovers', 'TOV'], 'categories': ['offensive']}
+            ]
+        },
+        'expanded': {
+            'statCategories': ['offensive', 'defensive', 'general'],
+            'columns': [
+                {'key': 'g', 'label': 'G', 'keys': ['gamesPlayed', 'GP'], 'categories': ['general']},
+                {'key': 'min', 'label': 'MIN', 'keys': ['minutes', 'MIN'], 'categories': ['general']},
+                {'key': 'pts', 'label': 'PTS', 'keys': ['points', 'PTS'], 'categories': ['offensive']},
+                {'key': 'reb', 'label': 'REB', 'keys': ['rebounds', 'REB'], 'categories': ['general']},
+                {'key': 'oreb', 'label': 'OREB', 'keys': ['offensiveRebounds', 'OREB'], 'categories': ['offensive']},
+                {'key': 'dreb', 'label': 'DREB', 'keys': ['defensiveRebounds', 'DREB'], 'categories': ['defensive']},
+                {'key': 'ast', 'label': 'AST', 'keys': ['assists', 'AST'], 'categories': ['offensive']},
+                {'key': 'stl', 'label': 'STL', 'keys': ['steals', 'STL'], 'categories': ['defensive']},
+                {'key': 'blk', 'label': 'BLK', 'keys': ['blocks', 'BLK'], 'categories': ['defensive']},
+                {'key': 'tov', 'label': 'TOV', 'keys': ['turnovers', 'TOV'], 'categories': ['offensive']},
+                {'key': 'fgm', 'label': 'FGM', 'keys': ['fieldGoalsMade', 'FGM'], 'categories': ['offensive']},
+                {'key': 'fga', 'label': 'FGA', 'keys': ['fieldGoalsAttempted', 'FGA'], 'categories': ['offensive']},
+                {'key': 'fgp', 'label': 'FG%', 'keys': ['fieldGoalPct', 'FG%'], 'categories': ['offensive']},
+                {'key': 'tpm', 'label': '3PM', 'keys': ['threePointFieldGoalsMade', '3PM'], 'categories': ['offensive']},
+                {'key': 'tpa', 'label': '3PA', 'keys': ['threePointFieldGoalsAttempted', '3PA'], 'categories': ['offensive']},
+                {'key': 'tpp', 'label': '3P%', 'keys': ['threePointPct', 'threePointFieldGoalPct', '3P%'], 'categories': ['offensive']},
+                {'key': 'ftm', 'label': 'FTM', 'keys': ['freeThrowsMade', 'FTM'], 'categories': ['offensive']},
+                {'key': 'fta', 'label': 'FTA', 'keys': ['freeThrowsAttempted', 'FTA'], 'categories': ['offensive']},
+                {'key': 'ftp', 'label': 'FT%', 'keys': ['freeThrowPct', 'FT%'], 'categories': ['offensive']},
+                {'key': 'per', 'label': 'PER', 'keys': ['PER'], 'categories': ['general']},
+                {'key': 'pm', 'label': '+/-', 'keys': ['plusMinus'], 'categories': ['general']}
+            ]
+        }
+    },
+    'mlb': {
+        'hitting': {
+            'standard': {
+                'statCategories': ['batting'],
+                'columns': [
+                    {'key': 'g', 'label': 'G', 'keys': ['teamGamesPlayed', 'gamesPlayed', 'G', 'GP']},
+                    {'key': 'ab', 'label': 'AB', 'keys': ['atBats', 'AB']},
+                    {'key': 'r', 'label': 'R', 'keys': ['runs', 'R']},
+                    {'key': 'h', 'label': 'H', 'keys': ['hits', 'H']},
+                    {'key': '2b', 'label': '2B', 'keys': ['doubles', '2B']},
+                    {'key': '3b', 'label': '3B', 'keys': ['triples', '3B']},
+                    {'key': 'hr', 'label': 'HR', 'keys': ['homeRuns', 'HR']},
+                    {'key': 'rbi', 'label': 'RBI', 'keys': ['RBIs', 'RBI']},
+                    {'key': 'bb', 'label': 'BB', 'keys': ['walks', 'BB']},
+                    {'key': 'so', 'label': 'SO', 'keys': ['strikeouts', 'SO', 'K']},
+                    {'key': 'sb', 'label': 'SB', 'keys': ['stolenBases', 'SB']},
+                    {'key': 'cs', 'label': 'CS', 'keys': ['caughtStealing', 'CS']},
+                    {'key': 'avg', 'label': 'AVG', 'keys': ['avg', 'battingAverage', 'AVG']},
+                    {'key': 'obp', 'label': 'OBP', 'keys': ['onBasePct', 'onBasePercentage', 'OBP']},
+                    {'key': 'slg', 'label': 'SLG', 'keys': ['slugAvg', 'sluggingPercentage', 'SLG']},
+                    {'key': 'ops', 'label': 'OPS', 'keys': ['OPS', 'onBasePlusSlugging']}
+                ]
+            },
+            'expanded': {
+                'statCategories': ['batting'],
+                'columns': [
+                    {'key': 'g', 'label': 'G', 'keys': ['teamGamesPlayed', 'gamesPlayed', 'G', 'GP']},
+                    {'key': 'ab', 'label': 'AB', 'keys': ['atBats', 'AB']},
+                    {'key': 'r', 'label': 'R', 'keys': ['runs', 'R']},
+                    {'key': 'h', 'label': 'H', 'keys': ['hits', 'H']},
+                    {'key': '2b', 'label': '2B', 'keys': ['doubles', '2B']},
+                    {'key': '3b', 'label': '3B', 'keys': ['triples', '3B']},
+                    {'key': 'hr', 'label': 'HR', 'keys': ['homeRuns', 'HR']},
+                    {'key': 'rbi', 'label': 'RBI', 'keys': ['RBIs', 'RBI']},
+                    {'key': 'tb', 'label': 'TB', 'keys': ['totalBases', 'TB']},
+                    {'key': 'bb', 'label': 'BB', 'keys': ['walks', 'BB']},
+                    {'key': 'so', 'label': 'SO', 'keys': ['strikeouts', 'SO', 'K']},
+                    {'key': 'hbp', 'label': 'HBP', 'keys': ['hitByPitch', 'HBP']},
+                    {'key': 'ibb', 'label': 'IBB', 'keys': ['intentionalWalks', 'IBB']},
+                    {'key': 'sb', 'label': 'SB', 'keys': ['stolenBases', 'SB']},
+                    {'key': 'cs', 'label': 'CS', 'keys': ['caughtStealing', 'CS']},
+                    {'key': 'avg', 'label': 'AVG', 'keys': ['avg', 'battingAverage', 'AVG']},
+                    {'key': 'obp', 'label': 'OBP', 'keys': ['onBasePct', 'onBasePercentage', 'OBP']},
+                    {'key': 'slg', 'label': 'SLG', 'keys': ['slugAvg', 'sluggingPercentage', 'SLG']},
+                    {'key': 'ops', 'label': 'OPS', 'keys': ['OPS', 'onBasePlusSlugging']},
+                    {'key': 'sf', 'label': 'SF', 'keys': ['sacrificeFlies', 'SF']},
+                    {'key': 'sh', 'label': 'SH', 'keys': ['sacrificeHits', 'SH']},
+                    {'key': 'gidp', 'label': 'GIDP', 'keys': ['groundIntoDoublePlay', 'GIDP']}
+                ]
+            }
+        },
+        'pitching': {
+            'standard': {
+                'statCategories': ['pitching'],
+                'columns': [
+                    {'key': 'g', 'label': 'G', 'keys': ['gamesPlayed', 'GP', 'G']},
+                    {'key': 'gs', 'label': 'GS', 'keys': ['gamesStarted', 'GS']},
+                    {'key': 'ip', 'label': 'IP', 'keys': ['innings', 'IP']},
+                    {'key': 'w', 'label': 'W', 'keys': ['wins', 'W']},
+                    {'key': 'l', 'label': 'L', 'keys': ['losses', 'L']},
+                    {'key': 'sv', 'label': 'SV', 'keys': ['saves', 'SV']},
+                    {'key': 'so', 'label': 'SO', 'keys': ['strikeouts', 'SO', 'K']},
+                    {'key': 'bb', 'label': 'BB', 'keys': ['walks', 'BB']},
+                    {'key': 'era', 'label': 'ERA', 'keys': ['ERA', 'earnedRunAverage']},
+                    {'key': 'whip', 'label': 'WHIP', 'keys': ['WHIP', 'walksHitsPerInningPitched']}
+                ]
+            },
+            'expanded': {
+                'statCategories': ['pitching'],
+                'columns': [
+                    {'key': 'g', 'label': 'G', 'keys': ['gamesPlayed', 'GP', 'G']},
+                    {'key': 'gs', 'label': 'GS', 'keys': ['gamesStarted', 'GS']},
+                    {'key': 'ip', 'label': 'IP', 'keys': ['innings', 'IP']},
+                    {'key': 'w', 'label': 'W', 'keys': ['wins', 'W']},
+                    {'key': 'l', 'label': 'L', 'keys': ['losses', 'L']},
+                    {'key': 'sv', 'label': 'SV', 'keys': ['saves', 'SV']},
+                    {'key': 'hld', 'label': 'HLD', 'keys': ['holds', 'HLD']},
+                    {'key': 'bs', 'label': 'BS', 'keys': ['blownSaves', 'BS']},
+                    {'key': 'so', 'label': 'SO', 'keys': ['strikeouts', 'SO', 'K']},
+                    {'key': 'bb', 'label': 'BB', 'keys': ['walks', 'BB']},
+                    {'key': 'h', 'label': 'H', 'keys': ['hits', 'H']},
+                    {'key': 'er', 'label': 'ER', 'keys': ['earnedRuns', 'ER']},
+                    {'key': 'hr', 'label': 'HR', 'keys': ['homeRuns', 'HR']},
+                    {'key': 'era', 'label': 'ERA', 'keys': ['ERA', 'earnedRunAverage']},
+                    {'key': 'whip', 'label': 'WHIP', 'keys': ['WHIP', 'walksHitsPerInningPitched']},
+                    {'key': 'svo', 'label': 'SVO', 'keys': ['saveOpportunities', 'SVO']},
+                    {'key': 'bf', 'label': 'BF', 'keys': ['battersFaced', 'BF']},
+                    {'key': 'pitches', 'label': 'PIT', 'keys': ['pitches', 'P']},
+                    {'key': 'cg', 'label': 'CG', 'keys': ['completeGames', 'CG']},
+                    {'key': 'sho', 'label': 'SHO', 'keys': ['shutouts', 'SHO']},
+                    {'key': 'wpct', 'label': 'WPCT', 'keys': ['winPct', 'W%']}
+                ]
+            }
+        }
+    },
+    'nhl': {
+        'standard': {
+            'statCategories': ['offensive', 'defensive', 'general', 'penalties'],
+            'columns': [
+                {'key': 'gp', 'label': 'GP', 'keys': ['gamesPlayed', 'GP'], 'categories': ['general']},
+                {'key': 'g', 'label': 'G', 'keys': ['goals', 'G'], 'categories': ['offensive']},
+                {'key': 'a', 'label': 'A', 'keys': ['assists', 'A'], 'categories': ['offensive']},
+                {'key': 'pts', 'label': 'PTS', 'keys': ['points', 'PTS'], 'categories': ['offensive']},
+                {'key': 's', 'label': 'S', 'keys': ['shotsTotal', 'S'], 'categories': ['offensive']},
+                {'key': 'pm', 'label': '+/-', 'keys': ['plusMinus'], 'categories': ['general']},
+                {'key': 'pim', 'label': 'PIM', 'keys': ['penaltyMinutes', 'PIM'], 'categories': ['penalties']},
+                {'key': 'ppg', 'label': 'PPG', 'keys': ['powerPlayGoals', 'PPG'], 'categories': ['offensive']},
+                {'key': 'shg', 'label': 'SHG', 'keys': ['shortHandedGoals', 'SHG'], 'categories': ['offensive']},
+                {'key': 'toi', 'label': 'TOI/G', 'keys': ['timeOnIcePerGame', 'TOI'], 'categories': ['general']},
+                {'key': 'w', 'label': 'W', 'keys': ['wins', 'W'], 'categories': ['general']},
+                {'key': 'l', 'label': 'L', 'keys': ['losses', 'L'], 'categories': ['general']},
+                {'key': 'sv', 'label': 'SV', 'keys': ['saves', 'SV'], 'categories': ['defensive']},
+                {'key': 'svp', 'label': 'SV%', 'keys': ['savePct', 'SV%'], 'categories': ['defensive']},
+                {'key': 'gaa', 'label': 'GAA', 'keys': ['avgGoalsAgainst', 'goalsAgainstAvg', 'GAA'], 'categories': ['defensive']},
+                {'key': 'so', 'label': 'SO', 'keys': ['shutouts', 'SO'], 'categories': ['defensive']}
+            ]
+        },
+        'expanded': {
+            'statCategories': ['offensive', 'defensive', 'general', 'penalties'],
+            'columns': [
+                {'key': 'gp', 'label': 'GP', 'keys': ['gamesPlayed', 'GP'], 'categories': ['general']},
+                {'key': 'g', 'label': 'G', 'keys': ['goals', 'G'], 'categories': ['offensive']},
+                {'key': 'a', 'label': 'A', 'keys': ['assists', 'A'], 'categories': ['offensive']},
+                {'key': 'pts', 'label': 'PTS', 'keys': ['points', 'PTS'], 'categories': ['offensive']},
+                {'key': 'ppg', 'label': 'PPG', 'keys': ['powerPlayGoals', 'PPG'], 'categories': ['offensive']},
+                {'key': 'shg', 'label': 'SHG', 'keys': ['shortHandedGoals', 'SHG'], 'categories': ['offensive']},
+                {'key': 's', 'label': 'S', 'keys': ['shotsTotal', 'S'], 'categories': ['offensive']},
+                {'key': 'sPct', 'label': 'S%', 'keys': ['shootingPct', 'S%'], 'categories': ['offensive']},
+                {'key': 'pm', 'label': '+/-', 'keys': ['plusMinus'], 'categories': ['general']},
+                {'key': 'pim', 'label': 'PIM', 'keys': ['penaltyMinutes', 'PIM'], 'categories': ['penalties']},
+                {'key': 'toi', 'label': 'TOI/G', 'keys': ['timeOnIcePerGame', 'TOI'], 'categories': ['general']},
+                {'key': 'w', 'label': 'W', 'keys': ['wins', 'W'], 'categories': ['general']},
+                {'key': 'l', 'label': 'L', 'keys': ['losses', 'L'], 'categories': ['general']},
+                {'key': 'ot', 'label': 'OTL', 'keys': ['otLosses', 'OT'], 'categories': ['general']},
+                {'key': 'sv', 'label': 'SV', 'keys': ['saves', 'SV'], 'categories': ['defensive']},
+                {'key': 'sa', 'label': 'SA', 'keys': ['shotsAgainst', 'SA'], 'categories': ['defensive']},
+                {'key': 'svp', 'label': 'SV%', 'keys': ['savePct', 'SV%'], 'categories': ['defensive']},
+                {'key': 'gaa', 'label': 'GAA', 'keys': ['avgGoalsAgainst', 'goalsAgainstAvg', 'GAA'], 'categories': ['defensive']},
+                {'key': 'ga', 'label': 'GA', 'keys': ['goalsAgainst', 'GA'], 'categories': ['defensive']},
+                {'key': 'so', 'label': 'SO', 'keys': ['shutouts', 'SO'], 'categories': ['defensive']}
+            ]
+        }
+    }
+}
+
+
+def normalize_stat_key(value):
+    return str(value or '').strip().lower()
+
+
+def build_stat_key_set(values):
+    return {normalize_stat_key(value) for value in values if value}
+
+
+def resolve_player_stats_schema(league, mode):
+    league_schemas = PLAYER_STATS_SCHEMAS.get(league) or {}
+    resolved_mode = 'pitching' if str(mode or '').lower() == 'pitching' else DEFAULT_PLAYER_STATS_MODE
+    schema = league_schemas.get(resolved_mode)
+    if not schema:
+        schema = league_schemas.get(DEFAULT_PLAYER_STATS_MODE) or league_schemas.get('pitching')
+    return schema
+
+
+def normalize_player_table_view(value):
+    if str(value or '').lower() == 'expanded':
+        return 'expanded'
+    return DEFAULT_PLAYER_TABLE_VIEW
+
+
+def resolve_player_table_schema(league, mode, view):
+    view_key = normalize_player_table_view(view)
+    if league == 'mlb':
+        mode_key = 'pitching' if str(mode or '').lower() == 'pitching' else DEFAULT_PLAYER_STATS_MODE
+        league_schema = PLAYER_TABLE_SCHEMAS.get('mlb') or {}
+        mode_schema = league_schema.get(mode_key) or {}
+        return mode_schema.get(view_key) or mode_schema.get(DEFAULT_PLAYER_TABLE_VIEW)
+    league_schema = PLAYER_TABLE_SCHEMAS.get(league) or {}
+    return league_schema.get(view_key) or league_schema.get(DEFAULT_PLAYER_TABLE_VIEW)
+
+
+def extract_stat_value_from_categories(categories, column, fallback_categories=None):
+    if not categories:
+        return None
+    keys = build_stat_key_set(column.get('keys') or [])
+    if not keys:
+        return None
+
+    category_map = {
+        normalize_stat_key(category.get('name')): category
+        for category in categories
+        if category.get('name')
+    }
+
+    desired = [
+        normalize_stat_key(name)
+        for name in (column.get('categories') or fallback_categories or [])
+        if name
+    ]
+
+    search_categories = []
+    if desired:
+        for name in desired:
+            category = category_map.get(name)
+            if category:
+                search_categories.append(category)
+    if not search_categories:
+        search_categories = categories
+
+    def find_in(categories_list):
+        for category in categories_list:
+            for stat in category.get('stats') or []:
+                name_key = normalize_stat_key(stat.get('name'))
+                abbr_key = normalize_stat_key(stat.get('abbreviation'))
+                display_key = normalize_stat_key(stat.get('displayName'))
+                short_key = normalize_stat_key(stat.get('shortDisplayName'))
+                if (
+                    name_key in keys
+                    or abbr_key in keys
+                    or display_key in keys
+                    or short_key in keys
+                ):
+                    value = stat.get('displayValue')
+                    if value is not None:
+                        return value
+                    return stat.get('value')
+        return None
+
+    value = find_in(search_categories)
+    if value is not None:
+        return value
+    if search_categories is not categories:
+        return find_in(categories)
+    return None
+
+
+def get_player_profile(ref):
+    ref = normalize_core_ref(ref)
+    cached = get_ttl_cached(PLAYER_PROFILE_CACHE, PLAYER_PROFILE_LOCK, ref, PLAYER_PROFILE_CACHE_TTL_SEC)
+    if cached:
+        return cached
+    if not ref:
+        return None
+    try:
+        payload = fetch_json(ref)
+    except Exception:
+        return None
+    pos_data = payload.get('position') or {}
+    position = pos_data.get('abbreviation') or pos_data.get('shortName') or pos_data.get('name')
+    headshot = payload.get('headshot')
+    if isinstance(headshot, dict):
+        headshot = headshot.get('href')
+    profile = {
+        'id': payload.get('id'),
+        'displayName': payload.get('displayName') or payload.get('fullName'),
+        'shortName': payload.get('shortName') or payload.get('displayName'),
+        'headshot': headshot,
+        'position': position,
+        'teamRef': normalize_core_ref((payload.get('team') or {}).get('$ref')),
+        'statsRef': normalize_core_ref((payload.get('statistics') or {}).get('$ref'))
+    }
+    set_ttl_cached(PLAYER_PROFILE_CACHE, PLAYER_PROFILE_LOCK, ref, profile)
+    return profile
+
+
+def get_player_stats_payload(ref):
+    ref = normalize_core_ref(ref)
+    cached = get_ttl_cached(PLAYER_STATS_CACHE, PLAYER_STATS_LOCK, ref, PLAYER_STATS_CACHE_TTL_SEC)
+    if cached:
+        return cached
+    if not ref:
+        return None
+    try:
+        payload = fetch_json(ref)
+    except Exception:
+        return None
+    set_ttl_cached(PLAYER_STATS_CACHE, PLAYER_STATS_LOCK, ref, payload)
+    return payload
+
+
+def build_player_index(league, season_year):
+    team_refs, source_url = fetch_core_team_refs(league, season_year)
+    team_ids = [
+        extract_id_from_ref(ref, 'teams')
+        for ref in team_refs
+        if extract_id_from_ref(ref, 'teams')
+    ]
+    athletes = []
+    seen = set()
+
+    def fetch_roster(team_id):
+        try:
+            return fetch_team_roster_refs(league, season_year, team_id)
+        except Exception as exc:
+            logging.warning('Failed to fetch roster for %s team %s: %s', league, team_id, exc)
+            return []
+
+    if team_ids:
+        max_workers = max(1, min(PLAYER_FETCH_WORKERS, len(team_ids)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(fetch_roster, team_id) for team_id in team_ids]
+            for future in as_completed(futures):
+                refs = future.result() or []
+                for ref in refs:
+                    ref = normalize_core_ref(ref)
+                    if not ref:
+                        continue
+                    athlete_id = extract_id_from_ref(ref, 'athletes')
+                    dedupe_key = athlete_id or ref
+                    if dedupe_key in seen:
+                        continue
+                    seen.add(dedupe_key)
+                    athletes.append({
+                        'id': athlete_id,
+                        'ref': ref,
+                        'position': None
+                    })
+
+    def sort_key(entry):
+        if entry.get('id') and str(entry['id']).isdigit():
+            return int(entry['id'])
+        return entry.get('ref') or ''
+
+    athletes.sort(key=sort_key)
+    return {
+        'season': season_year,
+        'athletes': athletes,
+        'positionIndex': {},
+        'source': {
+            'teams': source_url
+        }
+    }
+
+
+def resolve_player_index(league, season_value):
+    season_key = str(season_value or 'current').strip() or 'current'
+    cache_key = f"{league}:{season_key}"
+    cached, age = get_ttl_cached_with_age(PLAYER_INDEX_CACHE, PLAYER_INDEX_LOCK, cache_key, PLAYER_INDEX_CACHE_TTL_SEC)
+    if cached:
+        return cached, age, True
+
+    candidates = resolve_core_season_candidates(league, season_key)
+    if not candidates:
+        return None, None, False
+
+    last_error = None
+    for candidate in candidates:
+        try:
+            index_data = build_player_index(league, candidate)
+            if index_data and index_data.get('athletes'):
+                set_ttl_cached(PLAYER_INDEX_CACHE, PLAYER_INDEX_LOCK, cache_key, index_data)
+                return index_data, 0, False
+        except HTTPError as exc:
+            last_error = exc
+            if exc.code == 404 and season_key == 'current':
+                continue
+            raise
+        except Exception as exc:
+            last_error = exc
+            logging.error('Failed to build player index: %s', exc)
+            continue
+
+    if last_error:
+        raise last_error
+    return None, None, False
+
+
+def build_position_index(index_data, league):
+    if not index_data:
+        return {}
+    position_index = index_data.get('positionIndex') or {}
+    if position_index:
+        return position_index
+    athletes = index_data.get('athletes') or []
+    if not athletes:
+        return position_index
+
+    def resolve_position(entry):
+        if entry.get('position'):
+            return entry
+        profile = get_player_profile(entry.get('ref'))
+        if profile:
+            entry['position'] = profile.get('position')
+        return entry
+
+    max_workers = max(1, min(PLAYER_FETCH_WORKERS, len(athletes)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for entry in executor.map(resolve_position, athletes):
+            position = entry.get('position')
+            if not position:
+                continue
+            position_key = str(position).upper()
+            position_index.setdefault(position_key, []).append(entry)
+
+    index_data['positionIndex'] = position_index
+    return position_index
+
+
+def select_player_entries(index_data, league, position_filter, page, per_page):
+    athletes = index_data.get('athletes') or []
+    if not position_filter or str(position_filter).lower() in ('all', 'any', 'all positions'):
+        total = len(athletes)
+        start = max(0, (page - 1) * per_page)
+        end = start + per_page
+        return athletes[start:end], total
+
+    position_key = str(position_filter).strip().upper()
+    position_index = index_data.get('positionIndex') or {}
+    if position_key not in position_index:
+        position_index = build_position_index(index_data, league)
+    filtered = position_index.get(position_key, [])
+    total = len(filtered)
+    start = max(0, (page - 1) * per_page)
+    end = start + per_page
+    return filtered[start:end], total
+
+
+def build_player_row(args):
+    rank, entry, schema, team_cache = args
+    profile = get_player_profile(entry.get('ref'))
+    if not profile:
+        return None
+    if profile.get('position') and not entry.get('position'):
+        entry['position'] = profile.get('position')
+    team_data = None
+    if profile.get('teamRef'):
+        team_data = resolve_core_payload(profile.get('teamRef'), team_cache)
+
+    stats_payload = None
+    if profile.get('statsRef'):
+        stats_payload = get_player_stats_payload(profile.get('statsRef'))
+    categories = stats_payload.get('splits', {}).get('categories', []) if stats_payload else []
+
+    row_stats = {}
+    for column in schema.get('columns') or []:
+        key = column.get('key')
+        if not key:
+            continue
+        row_stats[key] = extract_stat_value_from_categories(
+            categories,
+            column,
+            schema.get('statCategories')
+        )
+
+    return {
+        'rank': rank,
+        'athlete': {
+            'id': profile.get('id'),
+            'displayName': profile.get('displayName'),
+            'shortName': profile.get('shortName'),
+            'headshot': profile.get('headshot'),
+            'position': profile.get('position')
+        },
+        'team': {
+            'id': team_data.get('id') if team_data else None,
+            'abbreviation': team_data.get('abbreviation') if team_data else None,
+            'displayName': team_data.get('displayName') if team_data else None,
+            'logo': select_logo(team_data.get('logos')) if team_data else None
+        } if team_data else None,
+        'stats': row_stats
+    }
+
+
+def fetch_player_leaders(league, season_value=None, season_type='2', limit=5, mode=DEFAULT_PLAYER_STATS_MODE):
+    sport = CORE_SPORTS.get(league)
+    if not sport:
+        raise ValueError('Unsupported league for player leaders')
+    safe_type = str(season_type or '2')
+    candidates = resolve_core_season_candidates(league, season_value)
+    if not candidates:
+        return None, None
+
+    payload = None
+    season_year = None
+    url = None
+    last_error = None
+    for candidate in candidates:
+        season_year = candidate
+        url = f"{CORE_API_BASE}/{sport}/leagues/{league}/seasons/{season_year}/types/{safe_type}/leaders"
+        try:
+            payload = fetch_json(url)
+            break
+        except HTTPError as exc:
+            last_error = exc
+            if exc.code == 404 and (not season_value or str(season_value).lower() == 'current'):
+                continue
+            raise
+
+    if not payload:
+        if last_error:
+            raise last_error
+        return None, None
+
+    schema = resolve_player_stats_schema(league, mode)
+    primary_category = None
+    if schema:
+        category_key = normalize_stat_key(schema.get('leaderCategory'))
+        if category_key:
+            for category in payload.get('categories') or []:
+                if normalize_stat_key(category.get('name')) == category_key:
+                    primary_category = category
+                    break
+    if not primary_category:
+        primary_category = (payload.get('categories') or [None])[0]
+
+    athlete_cache = {}
+    team_cache = {}
+    stats_cache = {}
+    categories = [
+        {
+            'name': category.get('name'),
+            'displayName': category.get('displayName') or category.get('shortDisplayName'),
+            'abbreviation': category.get('abbreviation'),
+            'leaders': []
+        }
+        for category in payload.get('categories') or []
+    ]
+
+    table = None
+    if schema and primary_category:
+        columns = schema.get('columns') or []
+        table_columns = [
+            {
+                'key': column.get('key'),
+                'label': column.get('label')
+            }
+            for column in columns
+            if column.get('key')
+        ]
+        rows = []
+        for index, entry in enumerate((primary_category.get('leaders') or [])[:limit], start=1):
+            athlete_ref = entry.get('athlete', {}).get('$ref') if isinstance(entry.get('athlete'), dict) else None
+            team_ref = entry.get('team', {}).get('$ref') if isinstance(entry.get('team'), dict) else None
+            athlete_data = resolve_core_payload(athlete_ref, athlete_cache) if athlete_ref else None
+            team_data = resolve_core_payload(team_ref, team_cache) if team_ref else None
+            if athlete_data and not team_data:
+                team_ref = athlete_data.get('team', {}).get('$ref') if isinstance(athlete_data.get('team'), dict) else None
+                team_data = resolve_core_payload(team_ref, team_cache) if team_ref else None
+
+            position = None
+            if athlete_data:
+                pos_data = athlete_data.get('position') or {}
+                position = pos_data.get('abbreviation') or pos_data.get('shortName') or pos_data.get('name')
+
+            stats_ref = entry.get('statistics', {}).get('$ref') if isinstance(entry.get('statistics'), dict) else None
+            stats_payload = resolve_core_payload(stats_ref, stats_cache) if stats_ref else None
+            stat_categories = stats_payload.get('splits', {}).get('categories', []) if stats_payload else []
+
+            row_stats = {}
+            for column in columns:
+                key = column.get('key')
+                if not key:
+                    continue
+                value = extract_stat_value_from_categories(stat_categories, column, schema.get('statCategories'))
+                row_stats[key] = value
+
+            rows.append({
+                'rank': index,
+                'athlete': {
+                    'id': athlete_data.get('id') if athlete_data else None,
+                    'displayName': athlete_data.get('displayName') if athlete_data else None,
+                    'shortName': athlete_data.get('shortName') if athlete_data else None,
+                    'headshot': (athlete_data.get('headshot') or {}).get('href')
+                    if isinstance(athlete_data.get('headshot'), dict)
+                    else athlete_data.get('headshot') if athlete_data else None,
+                    'position': position
+                } if athlete_data else None,
+                'team': {
+                    'id': team_data.get('id') if team_data else None,
+                    'abbreviation': team_data.get('abbreviation') if team_data else None,
+                    'displayName': team_data.get('displayName') if team_data else None,
+                    'logo': select_logo(team_data.get('logos')) if team_data else None
+                } if team_data else None,
+                'stats': row_stats
+            })
+
+        if table_columns and rows:
+            table = {
+                'columns': table_columns,
+                'rows': rows,
+                'category': primary_category.get('name') if primary_category else None
+            }
+
+    return {
+        'league': league,
+        'season': season_year,
+        'seasonType': safe_type,
+        'limit': limit,
+        'mode': str(mode or DEFAULT_PLAYER_STATS_MODE).lower(),
+        'categories': categories,
+        'table': table,
+        'meta': {
+            'source': url,
+            'cacheAgeSec': 0,
+            'stale': False,
+            'fromCache': False
+        }
+    }, url
 
 
 def get_cached_stats(key):
@@ -1318,6 +2357,196 @@ class RequestHandler(BaseHTTPRequestHandler):
                 }
             }
             set_cached_stats(cache_key, payload)
+            return self._send_json(200, payload)
+
+        if path == '/players':
+            league = (query.get('league') or ['nfl'])[0].lower()
+            season_value = (query.get('season') or ['current'])[0]
+            view_value = (query.get('view') or ['standard'])[0]
+            mode_value = (query.get('mode') or [DEFAULT_PLAYER_STATS_MODE])[0]
+            position_value = (query.get('position') or ['all'])[0]
+            page_value = (query.get('page') or ['1'])[0]
+            per_page_value = (query.get('perPage') or query.get('per_page') or ['50'])[0]
+            force_refresh = (query.get('force') or ['0'])[0] in ('1', 'true', 'yes')
+
+            if league not in CORE_SPORTS:
+                return self._send_json(400, {
+                    'error': 'unsupported_league',
+                    'message': 'Player stats are only available for NFL, NBA, MLB, and NHL.'
+                })
+
+            try:
+                page = max(1, int(page_value))
+            except ValueError:
+                page = 1
+
+            try:
+                per_page = int(per_page_value)
+            except ValueError:
+                per_page = 50
+            per_page = max(10, min(200, per_page))
+
+            view_key = normalize_player_table_view(view_value)
+            mode_key = 'pitching' if str(mode_value or '').lower() == 'pitching' else DEFAULT_PLAYER_STATS_MODE
+            schema = resolve_player_table_schema(league, mode_key, view_key)
+            if not schema:
+                return self._send_json(400, {
+                    'error': 'unsupported_view',
+                    'message': 'Player stats are unavailable for the requested view.'
+                })
+
+            season_key = str(season_value or 'current').strip() or 'current'
+            position_value = str(position_value or '').strip() or 'all'
+            cache_key = f"{league}:{season_key}:{view_key}:{mode_key}:{position_value}:{page}:{per_page}"
+            cached, age = (None, None)
+            if not force_refresh:
+                cached, age = get_ttl_cached_with_age(
+                    PLAYER_PAGE_CACHE,
+                    PLAYER_PAGE_LOCK,
+                    cache_key,
+                    PLAYER_PAGE_CACHE_TTL_SEC
+                )
+            if cached:
+                meta = cached.get('meta') or {}
+                meta['cacheAgeSec'] = age or 0
+                meta['fromCache'] = True
+                cached['meta'] = meta
+                return self._send_json(200, cached)
+
+            try:
+                index_data, index_age, index_from_cache = resolve_player_index(league, season_key)
+            except HTTPError as exc:
+                logging.error('Player index fetch failed: %s', exc)
+                if exc.code == 404:
+                    return self._send_json(404, {
+                        'error': 'season_not_found',
+                        'message': 'No player stats found for the requested season.'
+                    })
+                return self._send_json(502, {
+                    'error': 'players_unavailable',
+                    'message': str(exc)
+                })
+            except Exception as exc:
+                logging.error('Player index fetch failed: %s', exc)
+                return self._send_json(502, {
+                    'error': 'players_unavailable',
+                    'message': str(exc)
+                })
+
+            if not index_data or not index_data.get('athletes'):
+                return self._send_json(404, {
+                    'error': 'players_not_found',
+                    'message': 'No player stats available for this season.'
+                })
+
+            entries, total = select_player_entries(index_data, league, position_value, page, per_page)
+            max_page = max(1, (total + per_page - 1) // per_page)
+            if page > max_page:
+                page = max_page
+                entries, total = select_player_entries(index_data, league, position_value, page, per_page)
+
+            start_rank = (page - 1) * per_page + 1
+            team_cache = {}
+            args_list = [
+                (start_rank + offset, entry, schema, team_cache)
+                for offset, entry in enumerate(entries)
+            ]
+            rows = []
+            if args_list:
+                max_workers = max(1, min(PLAYER_FETCH_WORKERS, len(args_list)))
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    for row in executor.map(build_player_row, args_list):
+                        if row:
+                            rows.append(row)
+
+            columns = [
+                {'key': column.get('key'), 'label': column.get('label')}
+                for column in (schema.get('columns') or [])
+                if column.get('key')
+            ]
+
+            payload = {
+                'league': league,
+                'season': index_data.get('season'),
+                'view': view_key,
+                'mode': mode_key if league == 'mlb' else None,
+                'position': position_value,
+                'page': page,
+                'perPage': per_page,
+                'total': total,
+                'table': {
+                    'columns': columns,
+                    'rows': rows
+                },
+                'meta': {
+                    'source': index_data.get('source'),
+                    'cacheAgeSec': index_age or 0,
+                    'fromCache': index_from_cache
+                }
+            }
+
+            set_ttl_cached(PLAYER_PAGE_CACHE, PLAYER_PAGE_LOCK, cache_key, payload)
+            return self._send_json(200, payload)
+
+        if path == '/leaders':
+            league = (query.get('league') or ['nfl'])[0].lower()
+            season_value = (query.get('season') or ['current'])[0]
+            season_type = (query.get('type') or query.get('seasontype') or ['2'])[0]
+            mode_value = (query.get('mode') or ['hitting'])[0]
+            limit_value = (query.get('limit') or ['5'])[0]
+            force_refresh = (query.get('force') or ['0'])[0] in ('1', 'true', 'yes')
+
+            if league not in CORE_SPORTS:
+                return self._send_json(400, {
+                    'error': 'unsupported_league',
+                    'message': 'Player leaders are only available for NFL, NBA, MLB, and NHL.'
+                })
+
+            try:
+                limit = max(1, min(25, int(limit_value)))
+            except ValueError:
+                limit = 5
+
+            season_key = str(season_value or 'current').strip() or 'current'
+            mode_key = str(mode_value or DEFAULT_PLAYER_STATS_MODE).strip().lower() or DEFAULT_PLAYER_STATS_MODE
+            cache_key = f"{league}:{season_key}:{season_type}:{limit}:{mode_key}"
+            cached = None if force_refresh else get_cached_player_leaders(cache_key)
+            if cached:
+                return self._send_json(200, cached)
+
+            try:
+                payload, _ = fetch_player_leaders(
+                    league,
+                    season_value=season_key,
+                    season_type=season_type,
+                    limit=limit,
+                    mode=mode_key
+                )
+            except HTTPError as exc:
+                logging.error('Player leaders fetch failed: %s', exc)
+                if exc.code == 404:
+                    return self._send_json(404, {
+                        'error': 'season_not_found',
+                        'message': 'No player leaders found for the requested season.'
+                    })
+                return self._send_json(502, {
+                    'error': 'leaders_unavailable',
+                    'message': str(exc)
+                })
+            except Exception as exc:
+                logging.error('Player leaders fetch failed: %s', exc)
+                return self._send_json(502, {
+                    'error': 'leaders_unavailable',
+                    'message': str(exc)
+                })
+
+            if not payload:
+                return self._send_json(404, {
+                    'error': 'season_not_found',
+                    'message': 'No player leaders found for the requested season.'
+                })
+
+            set_cached_player_leaders(cache_key, payload)
             return self._send_json(200, payload)
 
         if path == '/standings':

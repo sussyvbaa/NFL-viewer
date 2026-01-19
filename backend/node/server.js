@@ -134,6 +134,8 @@ function createServer() {
     app.get('/api/teams', (req, res) => proxyToPython(req, res));
     app.get('/api/standings', (req, res) => proxyToPython(req, res));
     app.get('/api/stats', (req, res) => proxyToPython(req, res));
+    app.get('/api/players', (req, res) => proxyToPython(req, res));
+    app.get('/api/leaders', (req, res) => proxyToPython(req, res));
     app.get('/api/streams/check', (req, res) => proxyToPython(req, res));
 
     app.use('/css', express.static(path.join(ROOT_DIR, 'css')));

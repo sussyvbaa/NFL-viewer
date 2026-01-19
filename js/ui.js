@@ -21,6 +21,25 @@ const UI = {
     currentStandingsSort: 'default',
     showStandingsRank: false,
     currentStandingsSeason: null,
+    // Stats hub state
+    statsHubState: {
+        league: 'all',
+        season: 'current',
+        view: 'overall',
+        sort: 'default',
+        showRank: false,
+        tab: 'teams',
+        playersMode: 'hitting',
+        playersView: 'standard',
+        playersPosition: 'all',
+        playersPage: 1,
+        playersPerPage: 50,
+        playersSort: {
+            key: null,
+            direction: 'desc'
+        },
+        playersData: null
+    },
     // Loading state
     isLoading: false,
     // Add game preview initialized
@@ -71,7 +90,8 @@ const UI = {
         game: null,
         autoRefresh: false,
         refreshTimer: null,
-        lastUpdated: null
+        lastUpdated: null,
+        playByPlayExpanded: false
     },
 
 
@@ -95,6 +115,7 @@ const UI = {
             'game-card-template',
             'watch-template',
             'multi-view-template',
+            'stats-hub-template',
             'standings-template',
             'add-game-template',
             'not-found-template'
@@ -1580,6 +1601,7 @@ const UI = {
         this.statsState.lastKey = key;
         this.statsState.data = null;
         this.statsState.game = game;
+        this.statsState.playByPlayExpanded = false;
         this.renderStatsLoading();
 
         const stats = await API.getGameStats(game);
@@ -2061,9 +2083,7 @@ const UI = {
     },
 
     buildGamecastSection(payload) {
-        const playIndex = Array.isArray(payload?.plays?.plays)
-            ? payload.plays.plays
-            : (Array.isArray(payload?.plays?.allPlays) ? payload.plays.allPlays : []);
+        const playIndex = this.getPlayByPlayList(payload);
         const scoringPlays = Array.isArray(payload?.scoringPlays)
             ? payload.scoringPlays
             : (Array.isArray(payload?.plays?.scoringPlays) ? payload.plays.scoringPlays : []);
@@ -2077,6 +2097,7 @@ const UI = {
         const winProbability = Array.isArray(payload?.winProbability)
             ? payload.winProbability
             : (Array.isArray(payload?.winprobability) ? payload.winprobability : []);
+        const league = payload?.league || this.embedState.currentLeague || Config.DEFAULT_LEAGUE;
 
         if (!scoringPlays.length && !driveList.length && !winProbability.length) {
             return null;
@@ -2109,8 +2130,8 @@ const UI = {
                 const item = document.createElement('div');
                 item.className = 'stats-gamecast-item';
                 const playText = resolvedPlay?.text || resolvedPlay?.shortText || resolvedPlay?.summary || resolvedPlay?.description || 'Scoring play';
-                const clock = resolvedPlay?.clock?.displayValue || resolvedPlay?.clock?.display || resolvedPlay?.clock || '';
-                const period = resolvedPlay?.period?.number || resolvedPlay?.period?.displayValue || resolvedPlay?.period?.display || '';
+                const clock = this.formatPlayByPlayClock(resolvedPlay);
+                const period = this.formatPlayByPlayPeriod(resolvedPlay, league);
                 const team = resolvedPlay?.team?.abbreviation || resolvedPlay?.team?.shortDisplayName || resolvedPlay?.team?.displayName || '';
                 const score = (resolvedPlay?.homeScore !== undefined && resolvedPlay?.awayScore !== undefined)
                     ? `${resolvedPlay.awayScore}-${resolvedPlay.homeScore}`
@@ -2118,7 +2139,7 @@ const UI = {
 
                 const meta = document.createElement('div');
                 meta.className = 'stats-gamecast-meta';
-                meta.textContent = [team, period ? `Q${period}` : '', clock].filter(Boolean).join(' • ');
+                meta.textContent = [team, period, clock].filter(Boolean).join(' • ');
 
                 const detail = document.createElement('div');
                 detail.className = 'stats-gamecast-detail';
@@ -2203,6 +2224,150 @@ const UI = {
         }
 
         section.appendChild(grid);
+        return section;
+    },
+
+    getPlayByPlayList(payload) {
+        const plays = payload?.plays;
+        if (Array.isArray(plays)) return plays;
+        if (Array.isArray(plays?.plays)) return plays.plays;
+        if (Array.isArray(plays?.allPlays)) return plays.allPlays;
+        if (Array.isArray(plays?.playByPlay)) return plays.playByPlay;
+        if (Array.isArray(plays?.items)) return plays.items;
+        return [];
+    },
+
+    normalizePlayByPlayOrder(plays) {
+        const list = Array.isArray(plays) ? plays.filter(Boolean) : [];
+        if (list.length < 2) return list;
+
+        const pickSequence = play => {
+            const raw = play?.sequenceNumber ?? play?.sequence ?? play?.id ?? play?.playId ?? null;
+            if (raw === null || raw === undefined) return null;
+            const value = Number.parseInt(raw, 10);
+            return Number.isNaN(value) ? null : value;
+        };
+
+        const first = pickSequence(list[0]);
+        const last = pickSequence(list[list.length - 1]);
+        if (first !== null && last !== null && first < last) {
+            return [...list].reverse();
+        }
+        return list;
+    },
+
+    formatPlayByPlayPeriod(play, league) {
+        const period = play?.period || {};
+        const label = period?.displayValue || period?.shortDisplayName || period?.display || period?.name;
+        if (label) return label.toString();
+        const number = period?.number ?? period?.value ?? (typeof period === 'number' ? period : null);
+        if (!number) return '';
+        if (league === 'mlb') return `Inning ${number}`;
+        if (league === 'nhl') return `P${number}`;
+        return `Q${number}`;
+    },
+
+    formatPlayByPlayClock(play) {
+        const clock = play?.clock?.displayValue || play?.clock?.display || play?.clock?.value || play?.clock;
+        if (clock !== undefined && clock !== null && clock !== '') {
+            return clock.toString();
+        }
+        const time = play?.time?.displayValue || play?.time?.display || play?.time;
+        return time ? time.toString() : '';
+    },
+
+    buildPlayByPlaySection(payload) {
+        const rawPlays = this.getPlayByPlayList(payload);
+        if (!rawPlays.length) return null;
+
+        const league = payload?.league || this.embedState.currentLeague || Config.DEFAULT_LEAGUE;
+        const orderedPlays = this.normalizePlayByPlayOrder(rawPlays);
+        const limit = 40;
+        const expanded = this.statsState.playByPlayExpanded;
+        const visiblePlays = expanded ? orderedPlays : orderedPlays.slice(0, limit);
+
+        const section = document.createElement('div');
+        section.className = 'stats-section stats-playbyplay';
+
+        const header = document.createElement('div');
+        header.className = 'stats-playbyplay-header';
+
+        const title = document.createElement('div');
+        title.className = 'stats-section-title';
+        title.textContent = 'Play-by-Play';
+        header.appendChild(title);
+
+        if (orderedPlays.length > limit) {
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.className = 'btn btn-secondary btn-small stats-playbyplay-toggle';
+            toggle.textContent = expanded ? 'Show fewer' : `Show all (${orderedPlays.length})`;
+            toggle.addEventListener('click', () => {
+                this.statsState.playByPlayExpanded = !expanded;
+                this.renderStatsContent(payload);
+            });
+            header.appendChild(toggle);
+        }
+
+        section.appendChild(header);
+
+        const list = document.createElement('div');
+        list.className = 'stats-playbyplay-list';
+
+        visiblePlays.forEach(play => {
+            const item = document.createElement('div');
+            item.className = 'stats-playbyplay-item';
+            if (play?.scoringPlay || play?.scoreValue) {
+                item.classList.add('is-scoring');
+            }
+
+            const metaBits = [];
+            const team = play?.team?.abbreviation
+                || play?.team?.shortDisplayName
+                || play?.team?.displayName
+                || '';
+            const period = this.formatPlayByPlayPeriod(play, league);
+            const clock = this.formatPlayByPlayClock(play);
+            const type = play?.type?.shortText || play?.type?.text || play?.type?.name || '';
+            if (team) metaBits.push(team);
+            if (period) metaBits.push(period);
+            if (clock) metaBits.push(clock);
+            if (type) metaBits.push(type);
+
+            const meta = document.createElement('div');
+            meta.className = 'stats-playbyplay-meta';
+            meta.textContent = metaBits.join(' • ') || 'Play';
+
+            const detail = document.createElement('div');
+            detail.className = 'stats-playbyplay-detail';
+            detail.textContent = play?.text
+                || play?.shortText
+                || play?.summary
+                || play?.description
+                || 'Play details unavailable';
+
+            item.appendChild(meta);
+            item.appendChild(detail);
+
+            const awayScore = play?.awayScore ?? play?.awayTeamScore ?? play?.away?.score;
+            const homeScore = play?.homeScore ?? play?.homeTeamScore ?? play?.home?.score;
+            let scoreText = '';
+            if (awayScore !== undefined && homeScore !== undefined) {
+                scoreText = `${awayScore}-${homeScore}`;
+            } else if (play?.scoreValue !== undefined && play?.scoreValue !== null && play?.scoreValue !== '') {
+                scoreText = `${play.scoreValue} pts`;
+            }
+            if (scoreText) {
+                const score = document.createElement('div');
+                score.className = 'stats-playbyplay-score';
+                score.textContent = scoreText;
+                item.appendChild(score);
+            }
+
+            list.appendChild(item);
+        });
+
+        section.appendChild(list);
         return section;
     },
 
@@ -2441,6 +2606,11 @@ const UI = {
         const gamecastSection = this.buildGamecastSection(payload);
         if (gamecastSection) {
             fragment.appendChild(gamecastSection);
+        }
+
+        const playByPlaySection = this.buildPlayByPlaySection(payload);
+        if (playByPlaySection) {
+            fragment.appendChild(playByPlaySection);
         }
 
         if (!fragment.childNodes.length) {
@@ -2776,6 +2946,1091 @@ const UI = {
                 focusBtn.textContent = isFocused ? 'Grid' : 'Focus';
             }
         });
+    },
+
+    normalizeStatsSeason(value) {
+        if (!value) {
+            return 'current';
+        }
+        const raw = String(value).trim();
+        if (!raw || raw.toLowerCase() === 'current') {
+            return 'current';
+        }
+        const match = raw.match(/(19|20)\d{2}/);
+        return match ? match[0] : 'current';
+    },
+
+    normalizePlayerStatsView(value) {
+        return value === 'expanded' ? 'expanded' : 'standard';
+    },
+
+    getPlayerPositionOptions(league) {
+        const base = [{ value: 'all', label: 'All Positions' }];
+        const optionsByLeague = {
+            nfl: ['QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'CB', 'S', 'K', 'P'],
+            nba: ['PG', 'SG', 'SF', 'PF', 'C', 'G', 'F'],
+            mlb: ['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'OF', 'DH', 'SP', 'RP', 'P'],
+            nhl: ['C', 'LW', 'RW', 'D', 'G']
+        };
+        const items = optionsByLeague[league] || [];
+        return base.concat(items.map(item => ({ value: item, label: item })));
+    },
+
+    getStatsSortOptions(league) {
+        const options = [
+            { value: 'default', label: 'Default' },
+            { value: 'wins', label: 'Wins' },
+            { value: 'winPercent', label: 'Win %' }
+        ];
+        if (league === 'nhl' || league === 'all') {
+            options.push({ value: 'points', label: 'Points' });
+        }
+        return options;
+    },
+
+    syncStatsSortOptions(selectEl, league) {
+        if (!selectEl) {
+            return;
+        }
+        const options = this.getStatsSortOptions(league);
+        selectEl.innerHTML = '';
+        options.forEach(option => {
+            const optionEl = document.createElement('option');
+            optionEl.value = option.value;
+            optionEl.textContent = option.label;
+            selectEl.appendChild(optionEl);
+        });
+        const valid = options.some(option => option.value === this.statsHubState.sort);
+        if (!valid) {
+            this.statsHubState.sort = options[0]?.value || 'default';
+        }
+        selectEl.value = this.statsHubState.sort;
+    },
+
+    setStatsHubTab(tab, options = {}) {
+        const resolved = tab === 'players' ? 'players' : 'teams';
+        this.statsHubState.tab = resolved;
+        this.saveSettings({ statsTab: resolved });
+
+        const root = document.querySelector('.stats-hub');
+        if (root) {
+            root.classList.toggle('is-players', resolved === 'players');
+        }
+
+        if (resolved === 'players' && this.statsHubState.league === 'all') {
+            this.statsHubState.league = Config.DEFAULT_LEAGUE;
+            this.saveSettings({ statsLeague: this.statsHubState.league });
+            const leagueSelect = document.getElementById('stats-league');
+            if (leagueSelect) {
+                leagueSelect.value = this.statsHubState.league;
+            }
+            this.syncPlayerModeVisibility(this.statsHubState.league);
+            const positionSelect = document.getElementById('player-position-filter');
+            this.syncPlayerPositionFilter(positionSelect, this.statsHubState.league);
+        }
+
+        const tabs = document.querySelectorAll('.stats-hub-tab');
+        const panels = document.querySelectorAll('.stats-hub-panel');
+        tabs.forEach(button => {
+            button.classList.toggle('is-active', button.dataset.tab === resolved);
+        });
+        panels.forEach(panel => {
+            panel.classList.toggle('is-active', panel.id === `stats-hub-tab-${resolved}`);
+        });
+
+        if (!options.skipLoad) {
+            this.loadStatsHubTab();
+        }
+    },
+
+    setPlayerStatsMode(mode, options = {}) {
+        const resolved = mode === 'pitching' ? 'pitching' : 'hitting';
+        this.statsHubState.playersMode = resolved;
+        if (!options.skipSave) {
+            this.saveSettings({ statsPlayersMode: resolved });
+        }
+
+        const modeTabs = document.querySelectorAll('.player-mode-tab');
+        modeTabs.forEach(tab => {
+            tab.classList.toggle('is-active', tab.dataset.mode === resolved);
+        });
+
+        if (!options.skipLoad && this.statsHubState.tab === 'players') {
+            this.statsHubState.playersPage = 1;
+            this.loadStatsHubPlayers();
+        }
+    },
+
+    setPlayerStatsView(view, options = {}) {
+        const resolved = this.normalizePlayerStatsView(view);
+        this.statsHubState.playersView = resolved;
+        if (!options.skipSave) {
+            this.saveSettings({ statsPlayersView: resolved });
+        }
+
+        const viewTabs = document.querySelectorAll('.player-toggle');
+        viewTabs.forEach(tab => {
+            const isActive = tab.dataset.view === resolved;
+            tab.classList.toggle('is-active', isActive);
+            tab.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+        });
+
+        if (!options.skipLoad && this.statsHubState.tab === 'players') {
+            this.statsHubState.playersPage = 1;
+            this.loadStatsHubPlayers();
+        }
+    },
+
+    loadStatsHubTab() {
+        if (this.statsHubState.tab === 'players') {
+            return this.loadStatsHubPlayers();
+        }
+        return this.loadStatsHubTeams();
+    },
+
+    updateStatsHubStatus(metaList, season) {
+        const statusEl = document.getElementById('stats-status');
+        if (!statusEl) {
+            return;
+        }
+        if (!metaList.length) {
+            statusEl.textContent = '';
+            statusEl.classList.remove('stale');
+            return;
+        }
+        const ages = metaList
+            .map(meta => meta?.cacheAgeSec)
+            .filter(value => typeof value === 'number');
+        const maxAge = ages.length ? Math.max(...ages) : 0;
+        const ageLabel = this.formatAge(maxAge);
+        const stale = metaList.some(meta => meta?.stale);
+        const seasonLabel = season !== 'current' ? `Season ${season} | ` : '';
+        statusEl.textContent = `${seasonLabel}Updated ${ageLabel}${stale ? ' (stale)' : ''}`;
+        statusEl.classList.toggle('stale', stale);
+    },
+
+    syncPlayerSeasonFilter(selectEl) {
+        if (!selectEl) {
+            return;
+        }
+        const season = this.statsHubState.season || 'current';
+        const options = this.getStandingsSeasonOptions();
+        if (season !== 'current' && !options.includes(season)) {
+            options.unshift(season);
+        }
+        selectEl.innerHTML = '';
+        options.forEach(option => {
+            const optionEl = document.createElement('option');
+            optionEl.value = option;
+            optionEl.textContent = option === 'current' ? 'Current' : option;
+            selectEl.appendChild(optionEl);
+        });
+        selectEl.value = options.includes(season) ? season : 'current';
+    },
+
+    syncPlayerPositionFilter(selectEl, league) {
+        if (!selectEl) {
+            return;
+        }
+        const options = this.getPlayerPositionOptions(league);
+        selectEl.innerHTML = '';
+        options.forEach(option => {
+            const optionEl = document.createElement('option');
+            optionEl.value = option.value;
+            optionEl.textContent = option.label;
+            selectEl.appendChild(optionEl);
+        });
+        const valid = options.some(option => option.value === this.statsHubState.playersPosition);
+        if (!valid) {
+            this.statsHubState.playersPosition = 'all';
+            this.saveSettings({ statsPlayersPosition: this.statsHubState.playersPosition });
+        }
+        selectEl.value = this.statsHubState.playersPosition;
+    },
+
+    syncPlayerModeVisibility(league) {
+        const root = document.querySelector('.stats-hub');
+        if (!root) {
+            return;
+        }
+        const isMlb = league === 'mlb';
+        root.classList.toggle('is-mlb', isMlb);
+    },
+
+    getPlayerInitials(name) {
+        if (!name) return '—';
+        const parts = name.trim().split(/\s+/);
+        if (parts.length === 1) {
+            return parts[0].slice(0, 2).toUpperCase();
+        }
+        return `${parts[0][0] || ''}${parts[parts.length - 1][0] || ''}`.toUpperCase();
+    },
+
+    buildPlayerLeaderRow(leader) {
+        const athlete = leader?.athlete || {};
+        const team = leader?.team || {};
+        const name = athlete.displayName || athlete.shortName || 'Unknown';
+        const position = athlete.position || '';
+        const teamLabel = team.abbreviation || team.shortDisplayName || team.displayName || team.name || '';
+        const metaBits = [teamLabel, position].filter(Boolean);
+        const value = leader?.displayValue ?? leader?.value ?? '—';
+
+        const row = document.createElement('div');
+        row.className = 'player-leader-row';
+
+        const avatar = document.createElement('div');
+        avatar.className = 'player-avatar';
+
+        const img = document.createElement('img');
+        const headshot = athlete.headshot;
+        if (headshot) {
+            img.src = headshot;
+            img.alt = name;
+            img.loading = 'lazy';
+        }
+        img.onerror = () => {
+            avatar.classList.add('is-fallback');
+            img.removeAttribute('src');
+            img.removeAttribute('alt');
+        };
+
+        const initials = document.createElement('span');
+        initials.textContent = this.getPlayerInitials(name);
+
+        avatar.appendChild(img);
+        avatar.appendChild(initials);
+        if (!headshot) {
+            avatar.classList.add('is-fallback');
+        }
+
+        const info = document.createElement('div');
+        info.className = 'player-info';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'player-name';
+        nameEl.textContent = name;
+        const meta = document.createElement('div');
+        meta.className = 'player-meta';
+        meta.textContent = metaBits.join(' • ') || '—';
+        info.appendChild(nameEl);
+        info.appendChild(meta);
+
+        const valueEl = document.createElement('div');
+        valueEl.className = 'player-value';
+        valueEl.textContent = value;
+
+        row.appendChild(avatar);
+        row.appendChild(info);
+        row.appendChild(valueEl);
+
+        return row;
+    },
+
+    buildPlayerCategoryCard(category) {
+        const leaders = Array.isArray(category?.leaders) ? category.leaders : [];
+        if (!leaders.length) {
+            return null;
+        }
+        const card = document.createElement('div');
+        card.className = 'player-category-card';
+
+        const title = document.createElement('div');
+        title.className = 'player-category-title';
+        title.textContent = category.displayName || category.name || 'Leaders';
+        card.appendChild(title);
+
+        const list = document.createElement('div');
+        list.className = 'player-leader-list';
+        leaders.forEach(leader => list.appendChild(this.buildPlayerLeaderRow(leader)));
+        card.appendChild(list);
+
+        return card;
+    },
+
+    buildPlayerStatsTable(tableData, options = {}) {
+        const columns = Array.isArray(tableData?.columns) ? tableData.columns : [];
+        const rows = Array.isArray(tableData?.rows) ? tableData.rows : [];
+        if (!columns.length || !rows.length) {
+            return null;
+        }
+
+        const sortKey = options.sortKey || null;
+        const sortDir = options.sortDir || 'desc';
+        const sortedRows = sortKey
+            ? this.sortPlayerStatRows(rows, sortKey, sortDir)
+            : rows;
+
+        const table = document.createElement('table');
+        table.className = 'player-stats-table';
+
+        const thead = document.createElement('thead');
+        const headRow = document.createElement('tr');
+        const baseHeaders = [
+            { key: 'rank', label: '#' },
+            { key: 'player', label: 'Player' },
+            { key: 'team', label: 'Team' }
+        ];
+
+        baseHeaders.forEach(header => {
+            const th = document.createElement('th');
+            th.textContent = header.label;
+            headRow.appendChild(th);
+        });
+
+        columns.forEach(column => {
+            const th = document.createElement('th');
+            th.classList.add('is-sortable');
+            th.dataset.sortKey = column.key || '';
+            if (sortKey && column.key === sortKey) {
+                th.classList.add('is-sorted');
+                th.dataset.dir = sortDir;
+            }
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = column.label || column.key || '';
+            th.appendChild(button);
+            headRow.appendChild(th);
+        });
+
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        sortedRows.forEach((row, index) => {
+            const athlete = row?.athlete || {};
+            const team = row?.team || {};
+            const name = athlete.displayName || athlete.shortName || 'Unknown';
+            const position = athlete.position || '';
+            const teamLabel = team.abbreviation || team.shortDisplayName || team.displayName || team.name || '—';
+
+            const tr = document.createElement('tr');
+
+            const rankCell = document.createElement('td');
+            rankCell.textContent = row?.rank || (index + 1);
+            tr.appendChild(rankCell);
+
+            const playerCell = document.createElement('td');
+            const playerWrap = document.createElement('div');
+            playerWrap.className = 'player-cell';
+
+            const avatar = document.createElement('div');
+            avatar.className = 'player-avatar';
+            const img = document.createElement('img');
+            const headshot = athlete.headshot;
+            if (headshot) {
+                img.src = headshot;
+                img.alt = name;
+                img.loading = 'lazy';
+            }
+            img.onerror = () => {
+                avatar.classList.add('is-fallback');
+                img.removeAttribute('src');
+                img.removeAttribute('alt');
+            };
+            const initials = document.createElement('span');
+            initials.textContent = this.getPlayerInitials(name);
+            avatar.appendChild(img);
+            avatar.appendChild(initials);
+            if (!headshot) {
+                avatar.classList.add('is-fallback');
+            }
+
+            const nameWrap = document.createElement('div');
+            nameWrap.className = 'player-cell-name';
+            const nameEl = document.createElement('span');
+            nameEl.textContent = name;
+            nameWrap.appendChild(nameEl);
+            if (position) {
+                const posEl = document.createElement('small');
+                posEl.textContent = position;
+                nameWrap.appendChild(posEl);
+            }
+
+            playerWrap.appendChild(avatar);
+            playerWrap.appendChild(nameWrap);
+            playerCell.appendChild(playerWrap);
+            tr.appendChild(playerCell);
+
+            const teamCell = document.createElement('td');
+            teamCell.textContent = teamLabel || '—';
+            tr.appendChild(teamCell);
+
+            columns.forEach(column => {
+                const cell = document.createElement('td');
+                const value = row?.stats?.[column.key];
+                cell.textContent = value !== undefined && value !== null && value !== '' ? value : '—';
+                tr.appendChild(cell);
+            });
+
+            tbody.appendChild(tr);
+        });
+
+        table.appendChild(tbody);
+
+        const sortableHeaders = table.querySelectorAll('th.is-sortable');
+        sortableHeaders.forEach(th => {
+            th.addEventListener('click', () => {
+                const key = th.dataset.sortKey;
+                if (key) {
+                    this.setPlayerStatsSort(key);
+                }
+            });
+        });
+
+        return table;
+    },
+
+    buildPlayerStatsLeagueSection(leagueKey, data, options = {}) {
+        const table = this.buildPlayerStatsTable(data?.table);
+        if (!table) {
+            return null;
+        }
+
+        const section = document.createElement('section');
+        section.className = 'player-stats-league';
+
+        if (options.showLeagueLabel) {
+            const title = document.createElement('div');
+            title.className = 'player-stats-league-title';
+            title.textContent = Config.getLeagueConfig(leagueKey)?.name || leagueKey.toUpperCase();
+            section.appendChild(title);
+        }
+
+        const wrap = document.createElement('div');
+        wrap.className = 'player-stats-table-wrap';
+        wrap.appendChild(table);
+        section.appendChild(wrap);
+        return section;
+    },
+
+    renderPlayerStatsTable(payload) {
+        const tableWrap = document.getElementById('stats-players-table');
+        const emptyEl = document.getElementById('stats-players-empty');
+        if (!tableWrap) {
+            return;
+        }
+        const sortState = this.statsHubState.playersSort || {};
+        const table = this.buildPlayerStatsTable(payload?.table, {
+            sortKey: sortState.key,
+            sortDir: sortState.direction
+        });
+
+        if (!table) {
+            tableWrap.innerHTML = '';
+            emptyEl?.classList.remove('hidden');
+            this.updatePlayerStatsMeta(payload);
+            return;
+        }
+
+        tableWrap.innerHTML = '';
+        const wrap = document.createElement('div');
+        wrap.className = 'player-stats-table-wrap';
+        wrap.appendChild(table);
+        tableWrap.appendChild(wrap);
+        emptyEl?.classList.add('hidden');
+        this.updatePlayerStatsMeta(payload);
+    },
+
+    updatePlayerStatsMeta(payload) {
+        const summaryEl = document.getElementById('player-stats-summary');
+        const pageInfoEl = document.getElementById('player-page-info');
+        const prevBtn = document.getElementById('player-page-prev');
+        const nextBtn = document.getElementById('player-page-next');
+        const total = Number(payload?.total || 0);
+        const page = Number(payload?.page || this.statsHubState.playersPage || 1);
+        const perPage = Number(payload?.perPage || this.statsHubState.playersPerPage || 50);
+        const pageCount = total ? Math.max(1, Math.ceil(total / perPage)) : 1;
+
+        if (summaryEl) {
+            if (total) {
+                const start = Math.min((page - 1) * perPage + 1, total);
+                const end = Math.min(page * perPage, total);
+                summaryEl.textContent = `Showing ${start}-${end} of ${total}`;
+            } else {
+                summaryEl.textContent = 'No player stats found';
+            }
+        }
+
+        if (pageInfoEl) {
+            pageInfoEl.textContent = total ? `Page ${page} of ${pageCount}` : '';
+        }
+
+        if (prevBtn) {
+            prevBtn.disabled = page <= 1;
+        }
+
+        if (nextBtn) {
+            nextBtn.disabled = total ? page >= pageCount : true;
+        }
+    },
+
+    setPlayerStatsSort(key) {
+        if (!key) {
+            return;
+        }
+        const current = this.statsHubState.playersSort || {};
+        const direction = current.key === key && current.direction === 'desc' ? 'asc' : 'desc';
+        this.statsHubState.playersSort = { key, direction };
+        this.saveSettings({
+            statsPlayersSortKey: key,
+            statsPlayersSortDir: direction
+        });
+        if (this.statsHubState.playersData) {
+            this.renderPlayerStatsTable(this.statsHubState.playersData);
+        }
+    },
+
+    parsePlayerStatSortValue(value) {
+        if (value === null || value === undefined || value === '') {
+            return null;
+        }
+        if (typeof value === 'number') {
+            return Number.isFinite(value) ? value : null;
+        }
+        const raw = String(value).trim();
+        if (!raw || raw === '—') {
+            return null;
+        }
+        if (raw.includes(':')) {
+            const parts = raw.split(':').map(part => parseInt(part, 10));
+            if (parts.every(part => Number.isFinite(part))) {
+                if (parts.length === 2) {
+                    return parts[0] * 60 + parts[1];
+                }
+                if (parts.length === 3) {
+                    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+                }
+            }
+        }
+        const cleaned = raw.replace(/[%,$]/g, '').replace(/,/g, '');
+        const numeric = cleaned.replace(/[^0-9.\-]/g, '');
+        if (!numeric) {
+            return null;
+        }
+        const parsed = parseFloat(numeric);
+        return Number.isFinite(parsed) ? parsed : null;
+    },
+
+    sortPlayerStatRows(rows, sortKey, direction) {
+        if (!sortKey) {
+            return rows;
+        }
+        const dir = direction === 'asc' ? 1 : -1;
+        return [...rows].sort((a, b) => {
+            const aValue = this.parsePlayerStatSortValue(a?.stats?.[sortKey]);
+            const bValue = this.parsePlayerStatSortValue(b?.stats?.[sortKey]);
+            if (aValue === null && bValue === null) {
+                return 0;
+            }
+            if (aValue === null) {
+                return 1;
+            }
+            if (bValue === null) {
+                return -1;
+            }
+            if (aValue === bValue) {
+                return 0;
+            }
+            return (aValue > bValue ? 1 : -1) * dir;
+        });
+    },
+
+    async renderStatsHubPage() {
+        this.clearContent();
+        const fragment = this.getTemplate('stats-hub-template');
+        this.mainContent.appendChild(fragment);
+
+        const hubRoot = document.querySelector('.stats-hub');
+        const leagueSelect = document.getElementById('stats-league');
+        const seasonInput = document.getElementById('stats-season');
+        const seasonCurrentBtn = document.getElementById('stats-season-current');
+        const viewSelect = document.getElementById('stats-view');
+        const sortSelect = document.getElementById('stats-sort');
+        const rankToggle = document.getElementById('stats-rank');
+        const refreshBtn = document.getElementById('stats-refresh');
+        const tabButtons = document.querySelectorAll('.stats-hub-tab');
+        const playerModeTabs = document.querySelectorAll('.player-mode-tab');
+        const playerToggleBtns = document.querySelectorAll('.player-toggle');
+        const playerSeasonFilter = document.getElementById('player-season-filter');
+        const playerPositionFilter = document.getElementById('player-position-filter');
+        const playerPagePrev = document.getElementById('player-page-prev');
+        const playerPageNext = document.getElementById('player-page-next');
+
+        const settings = this.getSettings();
+        const savedLeague = settings?.statsLeague;
+        const savedSeason = settings?.statsSeason;
+        const savedView = settings?.statsView;
+        const savedSort = settings?.statsSort;
+        const savedRank = settings?.statsShowRank;
+        const savedTab = settings?.statsTab;
+        const savedPlayersMode = settings?.statsPlayersMode;
+        const savedPlayersView = settings?.statsPlayersView;
+        const savedPlayersPosition = settings?.statsPlayersPosition;
+        const savedPlayersSortKey = settings?.statsPlayersSortKey;
+        const savedPlayersSortDir = settings?.statsPlayersSortDir;
+        const savedPlayersPerPage = settings?.statsPlayersPerPage;
+
+        const allowedLeagues = ['all', ...Config.AMERICAN_LEAGUES];
+        const fallbackLeague = Config.AMERICAN_LEAGUES.includes(this.currentLeague)
+            ? this.currentLeague
+            : Config.DEFAULT_LEAGUE;
+        this.statsHubState.league = allowedLeagues.includes(savedLeague) ? savedLeague : fallbackLeague;
+        this.statsHubState.season = this.normalizeStatsSeason(savedSeason);
+        this.statsHubState.tab = savedTab === 'players' ? 'players' : 'teams';
+
+        const viewOptions = this.getStandingsViewOptions();
+        const normalizedView = this.normalizeStandingsView(savedView || this.statsHubState.view);
+        this.statsHubState.view = viewOptions.some(option => option.value === normalizedView)
+            ? normalizedView
+            : 'overall';
+        this.statsHubState.sort = savedSort || this.statsHubState.sort;
+        this.statsHubState.showRank = typeof savedRank === 'boolean' ? savedRank : this.statsHubState.showRank;
+        this.statsHubState.playersMode = savedPlayersMode === 'pitching' ? 'pitching' : this.statsHubState.playersMode;
+        this.statsHubState.playersView = this.normalizePlayerStatsView(savedPlayersView || this.statsHubState.playersView);
+        this.statsHubState.playersPosition = savedPlayersPosition || this.statsHubState.playersPosition;
+        this.statsHubState.playersPage = 1;
+        if (savedPlayersPerPage) {
+            const parsed = parseInt(savedPlayersPerPage, 10);
+            if (!Number.isNaN(parsed)) {
+                this.statsHubState.playersPerPage = parsed;
+            }
+        }
+        this.statsHubState.playersSort = {
+            key: savedPlayersSortKey || null,
+            direction: savedPlayersSortDir === 'asc' ? 'asc' : 'desc'
+        };
+        this.statsHubState.playersData = null;
+        this.syncPlayerSeasonFilter(playerSeasonFilter);
+        this.syncPlayerPositionFilter(playerPositionFilter, this.statsHubState.league);
+        this.syncPlayerModeVisibility(this.statsHubState.league);
+
+        if (leagueSelect) {
+            leagueSelect.innerHTML = '';
+            allowedLeagues.forEach(leagueKey => {
+                const option = document.createElement('option');
+                option.value = leagueKey;
+                option.textContent = leagueKey === 'all'
+                    ? 'All Leagues'
+                    : (Config.getLeagueConfig(leagueKey)?.name || leagueKey.toUpperCase());
+                leagueSelect.appendChild(option);
+            });
+            leagueSelect.value = this.statsHubState.league;
+            leagueSelect.addEventListener('change', () => {
+                this.statsHubState.league = leagueSelect.value;
+                this.saveSettings({ statsLeague: this.statsHubState.league });
+                this.syncStatsSortOptions(sortSelect, this.statsHubState.league);
+                this.syncPlayerModeVisibility(this.statsHubState.league);
+                this.syncPlayerPositionFilter(playerPositionFilter, this.statsHubState.league);
+                this.statsHubState.playersPage = 1;
+                this.loadStatsHubTab();
+            });
+        }
+
+        if (viewSelect) {
+            viewSelect.innerHTML = '';
+            viewOptions.forEach(option => {
+                const optionEl = document.createElement('option');
+                optionEl.value = option.value;
+                optionEl.textContent = option.label;
+                viewSelect.appendChild(optionEl);
+            });
+            viewSelect.value = this.statsHubState.view;
+            viewSelect.addEventListener('change', () => {
+                this.statsHubState.view = this.normalizeStandingsView(viewSelect.value);
+                this.saveSettings({ statsView: this.statsHubState.view });
+                this.loadStatsHubTab();
+            });
+        }
+
+        this.syncStatsSortOptions(sortSelect, this.statsHubState.league);
+        if (sortSelect) {
+            sortSelect.addEventListener('change', () => {
+                this.statsHubState.sort = sortSelect.value;
+                this.saveSettings({ statsSort: this.statsHubState.sort });
+                this.loadStatsHubTab();
+            });
+        }
+
+        if (rankToggle) {
+            rankToggle.checked = this.statsHubState.showRank;
+            rankToggle.addEventListener('change', () => {
+                this.statsHubState.showRank = rankToggle.checked;
+                this.saveSettings({ statsShowRank: this.statsHubState.showRank });
+                this.loadStatsHubTab();
+            });
+        }
+
+        if (seasonInput) {
+            seasonInput.value = this.statsHubState.season === 'current'
+                ? ''
+                : this.statsHubState.season;
+            const applySeason = () => {
+                const normalized = this.normalizeStatsSeason(seasonInput.value);
+                this.statsHubState.season = normalized;
+                seasonInput.value = normalized === 'current' ? '' : normalized;
+                this.saveSettings({ statsSeason: this.statsHubState.season });
+                this.syncPlayerSeasonFilter(playerSeasonFilter);
+                this.statsHubState.playersPage = 1;
+                this.loadStatsHubTab();
+            };
+            seasonInput.addEventListener('change', applySeason);
+            seasonInput.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    applySeason();
+                }
+            });
+        }
+
+        if (seasonCurrentBtn && seasonInput) {
+            seasonCurrentBtn.addEventListener('click', () => {
+                seasonInput.value = '';
+                this.statsHubState.season = 'current';
+                this.saveSettings({ statsSeason: this.statsHubState.season });
+                this.syncPlayerSeasonFilter(playerSeasonFilter);
+                this.statsHubState.playersPage = 1;
+                this.loadStatsHubTab();
+            });
+        }
+
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => {
+                API.clearStandingsCache();
+                API.clearPlayerStatsCache();
+                this.loadStatsHubTab();
+            });
+        }
+
+        if (hubRoot) {
+            hubRoot.classList.toggle('is-players', this.statsHubState.tab === 'players');
+        }
+
+        if (tabButtons.length) {
+            tabButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    if (button.dataset.tab) {
+                        this.setStatsHubTab(button.dataset.tab);
+                    }
+                });
+            });
+        }
+
+        if (playerModeTabs.length) {
+            playerModeTabs.forEach(tab => {
+                tab.addEventListener('click', () => {
+                    if (tab.dataset.mode) {
+                        this.setPlayerStatsMode(tab.dataset.mode);
+                    }
+                });
+            });
+        }
+
+        if (playerToggleBtns.length) {
+            playerToggleBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const view = btn.dataset.view;
+                    if (view) {
+                        this.setPlayerStatsView(view);
+                    }
+                });
+            });
+        }
+
+        if (playerSeasonFilter) {
+            playerSeasonFilter.addEventListener('change', () => {
+                const normalized = this.normalizeStatsSeason(playerSeasonFilter.value);
+                this.statsHubState.season = normalized;
+                this.saveSettings({ statsSeason: this.statsHubState.season });
+                if (seasonInput) {
+                    seasonInput.value = normalized === 'current' ? '' : normalized;
+                }
+                this.statsHubState.playersPage = 1;
+                this.loadStatsHubTab();
+            });
+        }
+
+        if (playerPositionFilter) {
+            playerPositionFilter.addEventListener('change', () => {
+                this.statsHubState.playersPosition = playerPositionFilter.value || 'all';
+                this.saveSettings({ statsPlayersPosition: this.statsHubState.playersPosition });
+                this.statsHubState.playersPage = 1;
+                this.loadStatsHubTab();
+            });
+        }
+
+        if (playerPagePrev) {
+            playerPagePrev.addEventListener('click', () => {
+                if (this.statsHubState.playersPage > 1) {
+                    this.statsHubState.playersPage -= 1;
+                    this.loadStatsHubPlayers();
+                }
+            });
+        }
+
+        if (playerPageNext) {
+            playerPageNext.addEventListener('click', () => {
+                const total = this.statsHubState.playersData?.total || 0;
+                if (!total) {
+                    return;
+                }
+                const perPage = this.statsHubState.playersData?.perPage || this.statsHubState.playersPerPage || 50;
+                const pageCount = Math.ceil(total / perPage);
+                if (this.statsHubState.playersPage < pageCount) {
+                    this.statsHubState.playersPage += 1;
+                    this.loadStatsHubPlayers();
+                }
+            });
+        }
+
+        this.setPlayerStatsMode(this.statsHubState.playersMode, { skipLoad: true, skipSave: true });
+        this.setPlayerStatsView(this.statsHubState.playersView, { skipLoad: true, skipSave: true });
+
+        this.setStatsHubTab(this.statsHubState.tab, { skipLoad: true });
+        await this.loadStatsHubTab();
+    },
+
+    buildStatsLeagueCard(leagueKey, data, viewMode, sortMode, showRank, season) {
+        const standings = data?.standings;
+        if (!standings) return null;
+        const groups = this.buildStandingsGroups(standings, leagueKey, viewMode, sortMode);
+        if (!Array.isArray(groups) || groups.length === 0) {
+            return null;
+        }
+
+        const card = document.createElement('section');
+        card.className = 'stats-league-card';
+        card.dataset.league = leagueKey;
+
+        const header = document.createElement('div');
+        header.className = 'stats-league-header';
+
+        const titleWrap = document.createElement('div');
+        titleWrap.className = 'stats-league-title-wrap';
+        const title = document.createElement('div');
+        title.className = 'stats-league-title';
+        title.textContent = Config.getLeagueConfig(leagueKey)?.name || leagueKey.toUpperCase();
+        const meta = document.createElement('div');
+        meta.className = 'stats-league-meta';
+
+        const seasonValue = standings?.season || (season !== 'current' ? season : 'Current');
+        const age = typeof data?.meta?.cacheAgeSec === 'number' ? data.meta.cacheAgeSec : null;
+        let metaText = seasonValue ? `Season ${seasonValue}` : 'Season';
+        if (age !== null) {
+            metaText += ` | Updated ${this.formatAge(age)}`;
+        }
+        if (data?.meta?.stale) {
+            metaText += ' (stale)';
+        }
+        meta.textContent = metaText;
+
+        titleWrap.appendChild(title);
+        titleWrap.appendChild(meta);
+
+        const teamCount = groups.reduce((sum, group) => sum + (group.entries?.length || 0), 0);
+        const badge = document.createElement('span');
+        badge.className = 'stats-league-pill';
+        badge.textContent = `${teamCount} teams`;
+
+        header.appendChild(titleWrap);
+        header.appendChild(badge);
+        card.appendChild(header);
+
+        const groupsWrap = document.createElement('div');
+        groupsWrap.className = 'stats-league-groups';
+        groups.forEach(group => {
+            const section = this.buildStandingsGroupSection(group, leagueKey, showRank);
+            groupsWrap.appendChild(section);
+        });
+
+        card.appendChild(groupsWrap);
+        return card;
+    },
+
+    buildPlayerLeadersCard(leagueKey, data, season) {
+        const categories = Array.isArray(data?.categories) ? data.categories : [];
+        if (!categories.length) return null;
+
+        const card = document.createElement('section');
+        card.className = 'stats-league-card stats-league-card--players';
+        card.dataset.league = leagueKey;
+
+        const header = document.createElement('div');
+        header.className = 'stats-league-header';
+
+        const titleWrap = document.createElement('div');
+        titleWrap.className = 'stats-league-title-wrap';
+        const title = document.createElement('div');
+        title.className = 'stats-league-title';
+        title.textContent = Config.getLeagueConfig(leagueKey)?.name || leagueKey.toUpperCase();
+        const meta = document.createElement('div');
+        meta.className = 'stats-league-meta';
+
+        const seasonValue = data?.season || (season !== 'current' ? season : 'Current');
+        const age = typeof data?.meta?.cacheAgeSec === 'number' ? data.meta.cacheAgeSec : null;
+        let metaText = seasonValue ? `Season ${seasonValue}` : 'Season';
+        if (age !== null) {
+            metaText += ` | Updated ${this.formatAge(age)}`;
+        }
+        if (data?.meta?.stale) {
+            metaText += ' (stale)';
+        }
+        meta.textContent = metaText;
+
+        titleWrap.appendChild(title);
+        titleWrap.appendChild(meta);
+
+        const badge = document.createElement('span');
+        badge.className = 'stats-league-pill';
+        const limit = data?.limit || 0;
+        badge.textContent = limit ? `Top ${limit}` : 'Leaders';
+
+        header.appendChild(titleWrap);
+        header.appendChild(badge);
+        card.appendChild(header);
+
+        const grid = document.createElement('div');
+        grid.className = 'player-category-grid';
+        categories.forEach(category => {
+            const categoryCard = this.buildPlayerCategoryCard(category);
+            if (categoryCard) {
+                grid.appendChild(categoryCard);
+            }
+        });
+
+        card.appendChild(grid);
+        return card;
+    },
+
+    async loadStatsHubTeams() {
+        const league = this.statsHubState.league || 'all';
+        const viewMode = this.normalizeStandingsView(this.statsHubState.view || 'overall');
+        const sortMode = this.statsHubState.sort || 'default';
+        const showRank = Boolean(this.statsHubState.showRank);
+        const season = this.statsHubState.season || 'current';
+        const seasonParam = season !== 'current' ? season : null;
+
+        const contentEl = document.getElementById('stats-teams-content');
+        const emptyEl = document.getElementById('stats-teams-empty');
+
+        if (!contentEl) return;
+
+        contentEl.innerHTML = `
+            <div class="loading-state">
+                <div class="loader"></div>
+                <p>Loading team stats...</p>
+            </div>
+        `;
+        emptyEl?.classList.add('hidden');
+        this.updateStatsHubStatus([], season);
+
+        await TeamsUtil.preloadLogos(league === 'all' ? 'all' : league);
+
+        const leagueKeys = league === 'all' ? Config.AMERICAN_LEAGUES : [league];
+        const results = await Promise.all(leagueKeys.map(async leagueKey => ({
+            league: leagueKey,
+            data: await API.fetchStandings(leagueKey, { season: seasonParam })
+        })));
+
+        const cards = results.map(result => this.buildStatsLeagueCard(
+            result.league,
+            result.data,
+            viewMode,
+            sortMode,
+            showRank,
+            season
+        )).filter(Boolean);
+
+        if (!cards.length) {
+            contentEl.innerHTML = '';
+            emptyEl?.classList.remove('hidden');
+            return;
+        }
+
+        const metaList = results.map(result => result.data?.meta).filter(Boolean);
+        this.updateStatsHubStatus(metaList, season);
+
+        contentEl.innerHTML = '';
+        cards.forEach(card => contentEl.appendChild(card));
+    },
+
+    async loadStatsHubPlayers() {
+        let league = this.statsHubState.league || Config.DEFAULT_LEAGUE;
+        const season = this.statsHubState.season || 'current';
+        const seasonParam = season !== 'current' ? season : null;
+        const mode = this.statsHubState.playersMode || 'hitting';
+        const view = this.statsHubState.playersView || 'standard';
+        const position = this.statsHubState.playersPosition || 'all';
+        const page = this.statsHubState.playersPage || 1;
+        const perPage = this.statsHubState.playersPerPage || 50;
+
+        const contentEl = document.getElementById('stats-players-content');
+        const tableWrap = document.getElementById('stats-players-table');
+        const emptyEl = document.getElementById('stats-players-empty');
+
+        if (!contentEl || !tableWrap) return;
+
+        if (league === 'all') {
+            league = Config.DEFAULT_LEAGUE;
+            this.statsHubState.league = league;
+            this.saveSettings({ statsLeague: league });
+            const leagueSelect = document.getElementById('stats-league');
+            if (leagueSelect) {
+                leagueSelect.value = league;
+            }
+            const positionSelect = document.getElementById('player-position-filter');
+            this.syncPlayerPositionFilter(positionSelect, league);
+            this.syncPlayerModeVisibility(league);
+        }
+
+        tableWrap.innerHTML = `
+            <div class="loading-state">
+                <div class="loader"></div>
+                <p>Loading player stats...</p>
+            </div>
+        `;
+        emptyEl?.classList.add('hidden');
+        this.updateStatsHubStatus([], season);
+        const summaryEl = document.getElementById('player-stats-summary');
+        const pageInfoEl = document.getElementById('player-page-info');
+        const prevBtn = document.getElementById('player-page-prev');
+        const nextBtn = document.getElementById('player-page-next');
+        if (summaryEl) {
+            summaryEl.textContent = 'Loading...';
+        }
+        if (pageInfoEl) {
+            pageInfoEl.textContent = '';
+        }
+        if (prevBtn) {
+            prevBtn.disabled = true;
+        }
+        if (nextBtn) {
+            nextBtn.disabled = true;
+        }
+
+        const options = {
+            season: seasonParam,
+            view,
+            page,
+            perPage,
+            position
+        };
+        if (league === 'mlb') {
+            options.mode = mode;
+        }
+
+        const data = await API.fetchPlayerStats(league, options);
+        this.statsHubState.playersData = data;
+
+        if (!data?.table?.rows?.length) {
+            tableWrap.innerHTML = '';
+            emptyEl?.classList.remove('hidden');
+            this.updatePlayerStatsMeta(data);
+            return;
+        }
+
+        this.statsHubState.playersPage = data.page || page;
+        this.statsHubState.playersPerPage = data.perPage || perPage;
+        this.renderPlayerStatsTable(data);
+        this.updateStatsHubStatus([data?.meta].filter(Boolean), season);
     },
 
     /**
@@ -3176,6 +4431,82 @@ const UI = {
         return value;
     },
 
+    buildStandingsGroupSection(group, league, showRank) {
+        const section = document.createElement('section');
+        section.className = 'standings-group';
+
+        const header = document.createElement('h2');
+        header.className = 'standings-group-title';
+        header.textContent = group?.name || 'Standings';
+        section.appendChild(header);
+
+        const table = document.createElement('table');
+        table.className = 'standings-table';
+
+        const columns = this.getStandingsColumns(league);
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        if (showRank) {
+            const rankHeader = document.createElement('th');
+            rankHeader.textContent = '#';
+            rankHeader.className = 'standings-rank-col';
+            headerRow.appendChild(rankHeader);
+        }
+        const teamHeader = document.createElement('th');
+        teamHeader.textContent = 'Team';
+        teamHeader.className = 'standings-team-col';
+        headerRow.appendChild(teamHeader);
+        columns.forEach(column => {
+            const th = document.createElement('th');
+            th.textContent = column.label;
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        (group?.entries || []).forEach((entry, index) => {
+            const row = document.createElement('tr');
+            if (showRank) {
+                const rankCell = document.createElement('td');
+                rankCell.textContent = String(index + 1);
+                rankCell.className = 'standings-rank-col';
+                row.appendChild(rankCell);
+            }
+            const teamCell = document.createElement('td');
+            teamCell.className = 'standings-team-col';
+            const teamWrap = document.createElement('div');
+            teamWrap.className = 'standings-team';
+
+            const logo = document.createElement('img');
+            logo.className = 'standings-logo hidden';
+            logo.loading = 'lazy';
+            this.setTeamLogo(logo, entry?.team, league);
+            if (!logo.classList.contains('hidden')) {
+                teamWrap.appendChild(logo);
+            }
+
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = entry?.team?.name || entry?.team?.abbreviation || 'Unknown';
+            teamWrap.appendChild(nameSpan);
+
+            teamCell.appendChild(teamWrap);
+            row.appendChild(teamCell);
+
+            columns.forEach(column => {
+                const cell = document.createElement('td');
+                cell.textContent = this.formatStandingsValue(entry?.stats?.[column.key]);
+                row.appendChild(cell);
+            });
+
+            tbody.appendChild(row);
+        });
+
+        table.appendChild(tbody);
+        section.appendChild(table);
+        return section;
+    },
+
     async loadStandings() {
         const league = this.currentStandingsLeague || Config.AMERICAN_LEAGUES[0];
         const viewMode = this.normalizeStandingsView(this.currentStandingsView || 'divisions');
@@ -3226,78 +4557,7 @@ const UI = {
 
         contentEl.innerHTML = '';
         groups.forEach(group => {
-            const section = document.createElement('section');
-            section.className = 'standings-group';
-
-            const header = document.createElement('h2');
-            header.className = 'standings-group-title';
-            header.textContent = group.name || 'Standings';
-            section.appendChild(header);
-
-            const table = document.createElement('table');
-            table.className = 'standings-table';
-
-            const columns = this.getStandingsColumns(league);
-            const thead = document.createElement('thead');
-            const headerRow = document.createElement('tr');
-            if (showRank) {
-                const rankHeader = document.createElement('th');
-                rankHeader.textContent = '#';
-                rankHeader.className = 'standings-rank-col';
-                headerRow.appendChild(rankHeader);
-            }
-            const teamHeader = document.createElement('th');
-            teamHeader.textContent = 'Team';
-            teamHeader.className = 'standings-team-col';
-            headerRow.appendChild(teamHeader);
-            columns.forEach(column => {
-                const th = document.createElement('th');
-                th.textContent = column.label;
-                headerRow.appendChild(th);
-            });
-            thead.appendChild(headerRow);
-            table.appendChild(thead);
-
-            const tbody = document.createElement('tbody');
-            (group.entries || []).forEach((entry, index) => {
-                const row = document.createElement('tr');
-                if (showRank) {
-                    const rankCell = document.createElement('td');
-                    rankCell.textContent = String(index + 1);
-                    rankCell.className = 'standings-rank-col';
-                    row.appendChild(rankCell);
-                }
-                const teamCell = document.createElement('td');
-                teamCell.className = 'standings-team-col';
-                const teamWrap = document.createElement('div');
-                teamWrap.className = 'standings-team';
-
-                const logo = document.createElement('img');
-                logo.className = 'standings-logo hidden';
-                logo.loading = 'lazy';
-                this.setTeamLogo(logo, entry.team, league);
-                if (!logo.classList.contains('hidden')) {
-                    teamWrap.appendChild(logo);
-                }
-
-                const nameSpan = document.createElement('span');
-                nameSpan.textContent = entry.team?.name || entry.team?.abbreviation || 'Unknown';
-                teamWrap.appendChild(nameSpan);
-
-                teamCell.appendChild(teamWrap);
-                row.appendChild(teamCell);
-
-                columns.forEach(column => {
-                    const cell = document.createElement('td');
-                    cell.textContent = this.formatStandingsValue(entry.stats?.[column.key]);
-                    row.appendChild(cell);
-                });
-
-                tbody.appendChild(row);
-            });
-
-            table.appendChild(tbody);
-            section.appendChild(table);
+            const section = this.buildStandingsGroupSection(group, league, showRank);
             contentEl.appendChild(section);
         });
     },

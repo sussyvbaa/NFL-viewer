@@ -132,6 +132,12 @@ const App = {
             UI.updateNavActiveState();
         });
 
+        // Stats Hub
+        Router.register('/stats', () => {
+            UI.renderStatsHubPage();
+            UI.updateNavActiveState();
+        });
+
         // Standings
         Router.register('/standings', () => {
             UI.renderStandingsPage();

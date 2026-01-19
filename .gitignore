@@ -5,4 +5,8 @@ backend/python/__pycache__/
 *.log
 opencode/
 opencode
-stats-overhaul-notes.md
+git-history.txt
+docs
+.claude
+.sisyphus
+reference
