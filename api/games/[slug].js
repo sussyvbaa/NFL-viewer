@@ -2,6 +2,8 @@ const {
     fetchMatches,
     buildGamesForAll,
     buildGamesForLeague,
+    fetchScoreboard,
+    buildGamesFromScoreboard,
     findGameBySlug,
     sortGames,
     applyLiveScores
@@ -34,6 +36,7 @@ module.exports = async (req, res) => {
                 cacheAgeSec: Math.floor((now - entry.timestamp) / 1000),
                 stale: false,
                 upstreamBase: entry.source,
+                sourceType: entry.sourceType || null,
                 league,
                 fromCache: true
             }
@@ -53,16 +56,36 @@ module.exports = async (req, res) => {
         games = sortGames(games, league);
         games = await applyLiveScores(games);
 
-        const match = findGameBySlug(games, slug);
+        let match = findGameBySlug(games, slug);
+        let upstreamSource = source;
+
+        if (!match && league !== 'all') {
+            try {
+                const scoreboardEvents = await fetchScoreboard(league);
+                const scoreboardGames = buildGamesFromScoreboard(scoreboardEvents, league);
+                match = findGameBySlug(scoreboardGames, slug);
+                if (match) {
+                    upstreamSource = 'espn';
+                }
+            } catch (error) {
+                console.warn('Scoreboard fallback failed.', {
+                    league,
+                    message: error.message
+                });
+            }
+        }
+
         if (!match) {
             res.status(404).json({ error: 'not_found' });
             return;
         }
 
+        const sourceType = upstreamSource === 'espn' ? 'espn_scoreboard' : 'streamed';
         cache.entries.set(cacheKey, {
             game: match,
             timestamp: Date.now(),
-            source
+            source: upstreamSource,
+            sourceType
         });
 
         res.status(200).json({
@@ -70,7 +93,8 @@ module.exports = async (req, res) => {
             meta: {
                 cacheAgeSec: 0,
                 stale: false,
-                upstreamBase: source,
+                upstreamBase: upstreamSource,
+                sourceType,
                 league,
                 fromCache: false
             }
@@ -83,6 +107,7 @@ module.exports = async (req, res) => {
                     cacheAgeSec: Math.floor((now - entry.timestamp) / 1000),
                     stale: true,
                     upstreamBase: entry.source,
+                    sourceType: entry.sourceType || null,
                     league,
                     fromCache: true,
                     error: 'upstream_unavailable'

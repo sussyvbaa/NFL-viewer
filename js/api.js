@@ -222,9 +222,13 @@ const API = {
                 meta
             };
             this.cache.forceNext = false;
+            if (meta?.sourceType === 'espn_scoreboard' && games.length) {
+                console.info('Using ESPN scoreboard fallback for games.', meta);
+            }
             if (!games.length) {
                 const message = meta?.warning || meta?.error || 'No games returned from API.';
-                console.warn(message, meta || {});
+                const payload = meta || { league, filter };
+                console.warn(message, payload);
             }
 
             return games;

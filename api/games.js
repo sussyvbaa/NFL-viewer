@@ -2,6 +2,8 @@ const {
     fetchMatches,
     buildGamesForAll,
     buildGamesForLeague,
+    fetchScoreboard,
+    buildGamesFromScoreboard,
     filterGames,
     sortGames,
     applyLiveScores
@@ -18,6 +20,7 @@ module.exports = async (req, res) => {
     const filterValue = (req.query.filter || 'all').toString();
     const league = (req.query.league || 'all').toString().toLowerCase();
     const debug = (req.query.debug || '0').toString() === '1';
+    const includeHealth = (req.query.includeHealth || '0').toString() === '1';
     const cacheKey = buildCacheKey(filterValue, league);
     const now = Date.now();
     const entry = cache.entries.get(cacheKey);
@@ -32,7 +35,9 @@ module.exports = async (req, res) => {
                 cacheAgeSec: Math.floor((now - entry.timestamp) / 1000),
                 stale: false,
                 upstreamBase: entry.source,
-                fromCache: true
+                sourceType: entry.sourceType || null,
+                fromCache: true,
+                ...(entry.upstreamCounts ? { upstreamCounts: entry.upstreamCounts } : {})
             }
         });
         return;
@@ -48,9 +53,49 @@ module.exports = async (req, res) => {
             ? buildGamesForAll(snapshot)
             : buildGamesForLeague(snapshot, league);
 
+        let usedScoreboard = false;
+        let scoreboardEvents = [];
+        let scoreboardGameCount = 0;
+        if (!games.length && league !== 'all') {
+            try {
+                scoreboardEvents = await fetchScoreboard(league);
+                const scoreboardGames = buildGamesFromScoreboard(scoreboardEvents, league);
+                if (scoreboardGames.length) {
+                    scoreboardGameCount = scoreboardGames.length;
+                    games = scoreboardGames;
+                    usedScoreboard = true;
+                }
+            } catch (error) {
+                console.warn('Scoreboard fallback failed.', {
+                    league,
+                    message: error.message
+                });
+            }
+        }
+
         games = filterGames(games, filterValue);
         games = sortGames(games, league);
-        games = await applyLiveScores(games);
+        if (!usedScoreboard) {
+            games = await applyLiveScores(games);
+        }
+
+        if (usedScoreboard) {
+            console.info('Using ESPN scoreboard fallback.', {
+                league,
+                filterValue,
+                scoreboardEvents: scoreboardEvents.length,
+                scoreboardGames: scoreboardGameCount,
+                filteredGames: games.length
+            });
+        }
+
+        if (!liveMatches.length && !allMatches.length) {
+            console.warn('Upstream returned no matches.', {
+                league,
+                filterValue,
+                upstreamBase: source
+            });
+        }
 
         if (games.length === 0 && (liveMatches.length || allMatches.length)) {
             console.warn('No games matched filters.', {
@@ -61,10 +106,19 @@ module.exports = async (req, res) => {
             });
         }
 
+        const upstreamCounts = {
+            liveMatches: liveMatches.length,
+            allMatches: allMatches.length,
+            scoreboardEvents: scoreboardEvents.length
+        };
+        const upstreamSource = usedScoreboard ? 'espn' : source;
+
         cache.entries.set(cacheKey, {
             games,
             timestamp: Date.now(),
-            source
+            source: upstreamSource,
+            sourceType: usedScoreboard ? 'espn_scoreboard' : 'streamed',
+            upstreamCounts
         });
 
         res.status(200).json({
@@ -75,13 +129,14 @@ module.exports = async (req, res) => {
                 league,
                 cacheAgeSec: 0,
                 stale: false,
-                upstreamBase: source,
+                upstreamBase: upstreamSource,
+                sourceType: usedScoreboard ? 'espn_scoreboard' : 'streamed',
                 fromCache: false,
-                ...(debug ? {
-                    debug: {
-                        liveMatches: liveMatches.length,
-                        allMatches: allMatches.length
-                    }
+                ...((debug || includeHealth) ? {
+                    debug: upstreamCounts
+                } : {}),
+                ...(games.length === 0 ? {
+                    upstreamCounts
                 } : {}),
                 ...(games.length === 0 && (liveMatches.length || allMatches.length) ? {
                     warning: 'No games matched filters; check league keywords or upstream data.'
@@ -100,8 +155,10 @@ module.exports = async (req, res) => {
                     cacheAgeSec: Math.floor((now - entry.timestamp) / 1000),
                     stale: true,
                     upstreamBase: entry.source,
+                    sourceType: entry.sourceType || null,
                     fromCache: true,
-                    error: 'upstream_unavailable'
+                    error: 'upstream_unavailable',
+                    ...(entry.upstreamCounts ? { upstreamCounts: entry.upstreamCounts } : {})
                 }
             });
             return;

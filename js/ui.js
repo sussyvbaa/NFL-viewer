@@ -614,6 +614,13 @@ const UI = {
         });
     },
 
+    syncLeagueButtons() {
+        const leagueBtns = document.querySelectorAll('.league-btn');
+        leagueBtns.forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.league === this.currentLeague);
+        });
+    },
+
     /**
      * Set up refresh button
      */
@@ -667,7 +674,18 @@ const UI = {
         try {
             await TeamsUtil.preloadLogos(this.currentLeague);
             // Fetch games from API
-            const apiGames = await API.getFilteredGames(this.currentFilter, this.currentLeague);
+            let apiGames = await API.getFilteredGames(this.currentFilter, this.currentLeague);
+            if (!apiGames.length && this.currentLeague !== 'all') {
+                const fallbackGames = await API.getFilteredGames(this.currentFilter, 'all');
+                if (fallbackGames.length) {
+                    this.currentLeague = 'all';
+                    this.saveSettings({ league: this.currentLeague });
+                    this.syncLeagueButtons();
+                    apiGames = fallbackGames;
+                    await TeamsUtil.preloadLogos(this.currentLeague);
+                }
+            }
+
             const enrichedApiGames = apiGames.map(g => API.enrichGame(g));
             this.updateDataStatus(API.getMeta(this.currentFilter, this.currentLeague));
 
